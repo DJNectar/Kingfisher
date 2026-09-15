@@ -28,6 +28,7 @@ import {
   bextTimecode,
 } from './riff/chunks.js';
 import { CHUNK_DESCRIPTIONS } from './riff/tables.js';
+import { scanForC2pa } from '../provenance/c2pa.js';
 import {
   createReport,
   addError,
@@ -231,6 +232,21 @@ async function walk(source, report) {
           entry.note = `could not be decoded: ${err.message}`;
           addWarning(report, `Chunk "${id}" at byte ${offset} could not be decoded: ${err.message}. Its contents are not reported.`);
         }
+      }
+    }
+
+    // A chunk this app does not decode may still be a provenance manifest;
+    // RIFF has no single reserved place for one.
+    if (!entry.decoded && usableSize >= 8 && !report.metadata.c2pa) {
+      try {
+        const found = await scanForC2pa(source, payloadOffset, usableSize, `the "${id}" chunk`);
+        if (found) {
+          report.metadata.c2pa = found;
+          entry.description = entry.description ?? 'Content Credentials (C2PA) provenance manifest';
+          entry.decoded = true;
+        }
+      } catch {
+        // A failed provenance probe must never affect the rest of the report.
       }
     }
 

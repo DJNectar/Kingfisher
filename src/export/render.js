@@ -109,6 +109,7 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
 
   lines.push(...renderObservations(report.observations));
   lines.push(...renderMetadata(report));
+  lines.push(...renderProvenance(report));
   lines.push(...renderChunks(report));
 
   lines.push('');
@@ -460,6 +461,61 @@ function renderMetadata(report) {
   }
   return lines;
 }
+
+/**
+ * The provenance section.
+ *
+ * Always rendered, including when nothing was found — because "nothing was
+ * found" is itself the answer to a question a user may be asking, and leaving
+ * the section out would let its absence be read as a clean bill of health.
+ */
+function renderProvenance(report) {
+  const p = report.provenance;
+  if (!p?.checked) return [];
+
+  const lines = [section('ORIGIN AND PROVENANCE')];
+
+  if (p.c2pa?.present) {
+    lines.push(row('Content Credentials', `present, in ${p.c2pa.location}`));
+    lines.push(row('Evidence', p.c2pa.evidence));
+    lines.push(row('Manifest size', formatBytes(p.c2pa.bytes)));
+    lines.push(row('Signature checked', 'no — see the note below'));
+    for (const l of wrap(p.c2pa.note, 66)) lines.push(`      ${l}`);
+    lines.push('');
+  }
+
+  if (p.toolMatches.length) {
+    lines.push('  Tools named in this file\'s metadata:');
+    for (const m of p.toolMatches) {
+      lines.push(`      ${m.tool} — ${m.kind}`);
+      lines.push(`          found in ${m.field}: "${m.value}"`);
+    }
+    lines.push('');
+  }
+
+  if (p.originFields.length) {
+    lines.push('  What the file records about how it was made:');
+    for (const f of p.originFields) lines.push(row(f.label, f.value, '      '));
+  } else {
+    lines.push('  This file records nothing about what made it.');
+  }
+
+  lines.push('');
+  for (const l of wrap(PROVENANCE_CAVEAT, 68)) lines.push(`  ${l}`);
+  return lines;
+}
+
+/**
+ * Printed under every provenance section, found or not. The limits are not a
+ * footnote here — without them a reader can take silence for evidence.
+ */
+const PROVENANCE_CAVEAT = 'How to read this: everything above is what the file '
+  + 'says about itself. Metadata is removed by ordinary work — a re-encode, a bounce '
+  + 'through a DAW, an upload — and it can be copied or typed in by hand, so finding '
+  + 'nothing here tells you nothing at all, and finding something is a claim rather '
+  + 'than proof. Some tools also mark audio with inaudible watermarks in the sound '
+  + 'itself rather than the metadata; Kingfisher cannot see those, and detecting them '
+  + 'needs the tool vendor\'s own software.';
 
 function renderChunks(report) {
   if (!report.chunks.length) return [];

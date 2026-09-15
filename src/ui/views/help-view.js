@@ -30,6 +30,7 @@ export function renderHelp(host) {
 
       toc([
         ['what-it-tells-you', 'What it tells you'],
+        ['provenance', 'Where a file came from'],
         ['checking', 'Checking a file or folder'],
         ['reading', 'Reading the results'],
         ['clients', 'Clients and projects'],
@@ -119,6 +120,35 @@ export function renderHelp(host) {
 
       el('h4', { text: 'What “flat-topped peaks” means' }),
       el('p', { text: 'When audio is pushed past the maximum a file can hold, the tops of the waves get cut off flat. Kingfisher counts how many samples sit at the absolute maximum value and how many of them run back to back. A long run of maximum-value samples is what clipped audio looks like from the inside. A single sample touching maximum is usually nothing; a run of dozens is not.' }),
+
+      // ------------------------------------------------------------------
+      h3('provenance', 'Where a file came from'),
+      el('p', { text: 'Every report has an "Origin and provenance" section. It answers one question: what does this file say about how it was made? That is a narrower question than it sounds, and the difference matters.' }),
+
+      el('h4', { text: 'Content Credentials' }),
+      el('p', { text: 'Some files carry a signed provenance record — the C2PA standard, also called Content Credentials — listing what created the file and what has edited it since. Adobe, OpenAI, Microsoft and Google all write these. When one is present, Kingfisher says so and shows where it is.' }),
+      el('div', { class: 'callout' }, [
+        el('strong', { text: 'Kingfisher finds the record but does not verify it. ' }),
+        'Checking that the signature is genuine and unaltered needs cryptography and a list of trusted signers, which this app does not do. So it reports that the file makes a provenance claim, not that the claim is true. A dedicated Content Credentials tool can confirm the rest.',
+      ]),
+
+      el('h4', { text: 'Tools named in the metadata' }),
+      el('p', { text: 'Files often record what made them, in an encoder or software field. Kingfisher shows every such field it finds, and points out when one names a tool worth knowing about — a music or speech generator, a stem separator, an automated mastering service.' }),
+
+      el('h4', { text: 'What this can and cannot tell you' }),
+      el('p', {}, [
+        el('strong', { text: 'Finding nothing tells you nothing. ' }),
+        'This is the important one. Metadata comes off in the course of ordinary work — a bounce through your DAW, a re-encode, an upload to a service that rewrites tags. Most files you receive will have little or nothing here, and that is completely normal. An empty provenance section is not a clean bill of health, and Kingfisher will never present it as one.',
+      ]),
+      el('p', {}, [
+        el('strong', { text: 'Finding something is a claim, not proof. ' }),
+        'A tag is plain text. It can be left by the tool, copied from another file, or typed in by hand. "The encoder field says Suno" is a fact about the file; "this was generated" is a conclusion the file cannot establish on its own.',
+      ]),
+      el('p', {}, [
+        el('strong', { text: 'Inaudible watermarks are invisible here. ' }),
+        'Several generators mark their output with a watermark buried in the sound itself rather than in the metadata. Kingfisher reads files; it cannot detect those, and doing so needs the software of whoever applied them.',
+      ]),
+      el('p', { class: 'muted', text: 'In short: this section is a useful place to look, and never a verdict. It is here so you can see what a file claims, and decide for yourself what that is worth.' }),
 
       // ------------------------------------------------------------------
       h3('clients', 'Clients and projects'),

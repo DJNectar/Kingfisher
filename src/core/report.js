@@ -129,7 +129,16 @@ export function createReport(file = {}) {
       // MP3
       mpeg: null,
       lame: null,
+      // Signed provenance (C2PA / Content Credentials), located but not verified
+      c2pa: null,
     },
+
+    /**
+     * What the file says about its own origin: a provenance manifest if it
+     * carries one, and any tool named in its encoder/software fields.
+     * Claims made by the file, never conclusions drawn about it.
+     */
+    provenance: null,
 
     /** Every chunk seen, decoded or not, so nothing in the file is invisible. */
     chunks: [],

@@ -223,6 +223,9 @@ async function walk(source, report) {
         if (ssndOffset) entry.note = `sample data starts ${ssndOffset} bytes into the chunk`;
       } else if (id === 'ID3 ' && usableSize > 0 && usableSize <= MAX_DECODE_SIZE) {
         report.metadata.id3v2 = parseId3v2(await readBytes(source, payloadOffset, usableSize));
+        if (report.metadata.id3v2?.c2pa && !report.metadata.c2pa) {
+          report.metadata.c2pa = report.metadata.id3v2.c2pa;
+        }
         entry.decoded = true;
       } else if (TEXT_CHUNKS[id] && usableSize > 0 && usableSize <= MAX_DECODE_SIZE) {
         const value = trimField(text(await readBytes(source, payloadOffset, usableSize)));

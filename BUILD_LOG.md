@@ -369,6 +369,54 @@ here does not. So the AAC path cannot be verified in this environment — only i
 the user's own browser. The UI says which codec a browser lacks rather than
 showing a dead button.
 
+---
+
+## Session 4 — 2026-09-15 (provenance)
+
+Request: can the app identify AI-generated files from metadata?
+
+### The honest answer, built into the design
+Partly — and the feature is shaped around what it CANNOT establish:
+
+- **C2PA / Content Credentials** manifests are located and reported, and
+  **never described as verified**. Verifying one needs COSE signature checking,
+  a certificate chain and a trust list; this app does none of that, so it says
+  the file *makes* a provenance claim. `signatureVerified` is hard-coded false
+  and a test asserts no report ever reads as "verified".
+- **Tool names in metadata** are reported as what the FIELD says. A test
+  asserts the observation text never asserts how the audio was made.
+- **Finding nothing means nothing**, and the section renders even when empty
+  so silence cannot be read as a clean result. A test asserts the report never
+  contains "not AI", "human-made" or "authentic".
+- **Inaudible watermarks are out of reach** and the app says so, in the report
+  and in Help.
+
+### Implemented
+- `src/core/provenance/signatures.js` — 36 tool signatures across generative
+  music, synthetic speech, generative models, stem separation and automated
+  mastering, plus 25 origin-describing metadata fields across every format.
+- `src/core/provenance/c2pa.js` — JUMBF/`c2pa` detection, the ISO BMFF C2PA
+  UUID, and a `scanForC2pa` helper each parser hooks into with one line.
+- `src/core/provenance/provenance.js` — the analysis, which reads the finished
+  report and never the bytes, exactly as the QC rules do.
+- Parser hooks: MP4 `uuid` boxes, ID3 `GEOB` frames (which also covers an ID3
+  tag inside a WAV or AIFF), FLAC `APPLICATION` blocks, and any RIFF chunk not
+  otherwise decoded.
+- Two rules, a text-report section, a UI section that auto-opens only when
+  something was found, and a Help section.
+
+### Verified (how)
+- `npm test` — **156 passing** (16 new). The tests cover the refusals as much
+  as the findings: no "verified", no verdict language, and the caveat present
+  on every report whatever the outcome.
+- A `minimalM4a()` fixture was added after noticing one test checked the
+  detector rather than the MP4 parser's own `uuid` branch — that branch is now
+  genuinely exercised, along with a non-C2PA uuid box that must be ignored.
+- In the browser, three cases: a Suno-tagged MP3, a WAV with a C2PA chunk, and
+  an ordinary WAV. Each reads correctly, and the section stays collapsed when
+  there is nothing of note.
+- Against the user's real MP3: correctly reports Lavf/LAME and no tool match.
+
 ### Status — complete
 - [x] Byte layer, WAV/RIFF/RF64 parser, chunk decoders, report model, registry
 - [x] PCM scanner, QC engine + 23 rules

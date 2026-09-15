@@ -27,6 +27,7 @@
 
 import { latin1, text, trimField } from '../bytes.js';
 import { parseId3v2, readId3v2Header } from './id3.js';
+import { scanForC2pa } from '../provenance/c2pa.js';
 import {
   createReport,
   addError,
@@ -201,6 +202,14 @@ async function walk(source, report) {
         entry.decoded = true;
       } else if (type === 3) {
         entry.note = `${Math.floor(length / 18).toLocaleString('en-US')} seek points`;
+      } else if (type === 2 && entry.usableSize >= 8 && !report.metadata.c2pa) {
+        // APPLICATION is where FLAC carries third-party payloads.
+        const found = await scanForC2pa(source, payloadOffset, entry.usableSize, 'an APPLICATION block');
+        if (found) {
+          report.metadata.c2pa = found;
+          entry.description = 'Content Credentials (C2PA) provenance manifest';
+          entry.decoded = true;
+        }
       }
     } catch (err) {
       entry.note = `could not be decoded: ${err.message}`;

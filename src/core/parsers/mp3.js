@@ -243,6 +243,9 @@ async function walk(source, report) {
       if (id3Header.size <= 8 * 1024 * 1024 && id3Header.size <= source.size) {
         const view = await source.read(0, id3Header.size);
         report.metadata.id3v2 = parseId3v2(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+        if (report.metadata.id3v2?.c2pa && !report.metadata.c2pa) {
+          report.metadata.c2pa = report.metadata.id3v2.c2pa;
+        }
       }
     } catch (err) {
       addWarning(report, `The ID3 tag could not be read: ${err.message}. Its contents are not reported.`);

@@ -812,3 +812,118 @@ export function opusTags(tags) {
 export function vorbisComments(tags) {
   return concat(new Uint8Array([0x03]), enc.encode('vorbis'), vorbisCommentBlock({ vendor: 'libVorbis', tags }));
 }
+
+// ---------------------------------------------------------------------------
+// Provenance fixtures: a stand-in C2PA manifest, built to the structure the
+// detector looks for (a JUMBF box labelled "c2pa") without being a real signed
+// manifest — which is exactly the case the app must describe as "found, not
+// verified".
+// ---------------------------------------------------------------------------
+
+export function c2paManifestBytes({ extra = 512 } = {}) {
+  const label = enc.encode('c2pa\0');
+  const claim = enc.encode('c2pa.claim');
+  const body = new Uint8Array(24 + label.length + claim.length + extra);
+  const dv = new DataView(body.buffer);
+  dv.setUint32(0, body.byteLength, false); // JUMBF box length
+  body.set(enc.encode('jumb'), 4);
+  dv.setUint32(8, 8 + label.length, false); // description box length
+  body.set(enc.encode('jumd'), 12);
+  body.set(label, 16);
+  body.set(claim, 16 + label.length);
+  return body;
+}
+
+/** An ID3 GEOB frame carrying an embedded object. */
+export function id3GeobFrame(payload, { major = 3 } = {}) {
+  const h = new Uint8Array(10);
+  h.set(enc.encode('GEOB'), 0);
+  new DataView(h.buffer).setUint32(4, payload.byteLength, false);
+  return concat(h, payload);
+}
+
+/** An ID3v2 tag with raw frame bytes appended (for GEOB and the like). */
+export function id3v2TagWithRaw(frames, rawFrames = [], { major = 3 } = {}) {
+  const tag = id3v2Tag(frames, { major });
+  const body = concat(tag.subarray(10), ...rawFrames);
+  const header = new Uint8Array(10);
+  header.set(enc.encode('ID3'), 0);
+  header[3] = major;
+  const n = body.byteLength;
+  header[6] = (n >> 21) & 0x7f; header[7] = (n >> 14) & 0x7f;
+  header[8] = (n >> 7) & 0x7f; header[9] = n & 0x7f;
+  return concat(header, body);
+}
+
+/** An ISO BMFF `uuid` box carrying the C2PA identifier. */
+export function c2paUuidBox(payload) {
+  const uuid = 'd8fec3d61b0e483c929758 28877ec481'.replace(/\s/g, '');
+  const uuidBytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) uuidBytes[i] = parseInt(uuid.substr(i * 2, 2), 16);
+  const size = 8 + 16 + payload.byteLength;
+  const out = new Uint8Array(size);
+  new DataView(out.buffer).setUint32(0, size, false);
+  out.set(enc.encode('uuid'), 4);
+  out.set(uuidBytes, 8);
+  out.set(payload, 24);
+  return out;
+}
+
+/** A generic ISO BMFF box. */
+export function mp4Box(type, payload = new Uint8Array(0)) {
+  const body = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+  const out = new Uint8Array(8 + body.byteLength);
+  new DataView(out.buffer).setUint32(0, out.byteLength, false);
+  out.set(enc.encode(type.padEnd(4)).subarray(0, 4), 4);
+  out.set(body, 8);
+  return out;
+}
+
+/** ftyp box with a brand. */
+export function ftypBox({ brand = 'M4A ', minor = 0, compatible = ['isom', 'mp42'] } = {}) {
+  const parts = [enc.encode(brand.padEnd(4)).subarray(0, 4)];
+  const minorBytes = new Uint8Array(4);
+  new DataView(minorBytes.buffer).setUint32(0, minor, false);
+  parts.push(minorBytes);
+  for (const c of compatible) parts.push(enc.encode(c.padEnd(4)).subarray(0, 4));
+  return mp4Box('ftyp', concat(...parts));
+}
+
+/**
+ * A minimal but structurally real M4A: ftyp, a moov describing one AAC track,
+ * and an mdat. Enough for the parser to report a format and a duration.
+ */
+export function minimalM4a({
+  timescale = 44100,
+  duration = 441000,
+  channels = 2,
+  extraTopLevel = [],
+  mdatBytes = 4096,
+} = {}) {
+  const u32 = (v) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, false); return b; };
+  const u16 = (v) => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, false); return b; };
+
+  // mvhd / mdhd share the version+flags, times, timescale, duration layout.
+  const headerBox = (type) => mp4Box(type, concat(
+    new Uint8Array(4), // version + flags
+    u32(0), u32(0), // creation, modification
+    u32(timescale), u32(duration),
+    new Uint8Array(type === 'mvhd' ? 80 : 4),
+  ));
+
+  // AudioSampleEntry: 6 reserved, 2 data-ref index, 8 reserved, channels,
+  // sample size, 2 predefined, 2 reserved, then a 16.16 sample rate.
+  const mp4a = mp4Box('mp4a', concat(
+    new Uint8Array(6), u16(1), new Uint8Array(8),
+    u16(channels), u16(16), u16(0), u16(0),
+    u32(timescale * 65536 > 0xffffffff ? 0 : timescale * 65536),
+  ));
+  const stsd = mp4Box('stsd', concat(new Uint8Array(4), u32(1), mp4a));
+  const stbl = mp4Box('stbl', stsd);
+  const minf = mp4Box('minf', stbl);
+  const mdia = mp4Box('mdia', concat(headerBox('mdhd'), minf));
+  const trak = mp4Box('trak', mdia);
+  const moov = mp4Box('moov', concat(headerBox('mvhd'), trak));
+
+  return concat(ftypBox(), ...extraTopLevel, moov, mp4Box('mdat', new Uint8Array(mdatBytes)));
+}

@@ -323,6 +323,29 @@ select:focus, input:focus, textarea:focus, .btn:focus-visible, .tab:focus-visibl
   margin-bottom: 16px;
 }
 
+/* Provenance */
+.provenance-found {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: var(--radius);
+  background: var(--notice-bg);
+  border-left: 3px solid var(--notice);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.provenance-found strong { color: var(--text); }
+.provenance-caveat {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+.provenance-caveat strong { color: var(--text); }
+
 /* Offer to decode a compressed file to measure its levels */
 .measure-offer {
   padding: 11px 13px;

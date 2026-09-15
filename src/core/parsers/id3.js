@@ -20,6 +20,7 @@
  */
 
 import { latin1, trimField } from '../bytes.js';
+import { detectC2pa, describeC2pa } from '../provenance/c2pa.js';
 
 /** Frames worth surfacing, with the name a person would recognise. */
 const FRAME_NAMES = {
@@ -34,6 +35,7 @@ const FRAME_NAMES = {
   TOPE: 'Original artist', TTL: 'Title', COMM: 'Comment', USLT: 'Lyrics',
   APIC: 'Artwork', TSOA: 'Album sort', TSOP: 'Artist sort', TSOT: 'Title sort',
   TCMP: 'Compilation', TDTG: 'Tagging time', WXXX: 'URL', TXXX: 'User text',
+  GEOB: 'Embedded object', PRIV: 'Private data',
   // v2.2 (3-character ids)
   TT2: 'Title', TP1: 'Artist', TP2: 'Album artist', TAL: 'Album',
   TYE: 'Year', TRK: 'Track', TCO: 'Genre', TCM: 'Composer', TEN: 'Encoded by',
@@ -121,6 +123,7 @@ export function parseId3v2(bytes) {
   const frameHeaderSize = header.major === 2 ? 6 : 10;
   const frames = {};
   const rawFrames = [];
+  let c2pa = null;
 
   while (pos + frameHeaderSize <= body.byteLength) {
     const id = latin1(body.subarray(pos, pos + idLength));
@@ -142,6 +145,21 @@ export function parseId3v2(bytes) {
     const payload = body.subarray(start, start + size);
 
     rawFrames.push({ id, size, name: FRAME_NAMES[id] ?? id });
+
+    // GEOB carries an arbitrary embedded object, and is where an MP3 keeps a
+    // C2PA provenance manifest. Checked here rather than in the MP3 parser
+    // because an ID3 tag can also sit inside a WAV or an AIFF.
+    if ((id === 'GEOB' || id === 'GEO') && !c2pa) {
+      const found = detectC2pa(payload);
+      if (found.present) {
+        c2pa = describeC2pa({
+          location: `an ID3 ${id} frame`,
+          bytes: payload.byteLength,
+          evidence: found.evidence,
+        });
+      }
+    }
+
     const value = decodeFrame(id, payload);
     if (value !== null && value !== '') {
       frames[id] = { name: FRAME_NAMES[id] ?? id, value };
@@ -150,7 +168,7 @@ export function parseId3v2(bytes) {
     pos = start + size;
   }
 
-  return { version: header.version, size: header.size, frames, frameList: rawFrames };
+  return { version: header.version, size: header.size, frames, frameList: rawFrames, c2pa };
 }
 
 /**
@@ -172,6 +190,11 @@ function decodeFrame(id, payload) {
 
   // Artwork: report what it is, not the image itself.
   if (id === 'APIC' || id === 'PIC') return describePicture(id, payload);
+
+  // Embedded objects are described, not extracted.
+  if (id === 'GEOB' || id === 'GEO') {
+    return `embedded object, ${payload.byteLength.toLocaleString('en-US')} bytes`;
+  }
 
   // Comments and lyrics: encoding, 3-byte language, description, then text.
   if (id === 'COMM' || id === 'COM' || id === 'USLT' || id === 'ULT') {

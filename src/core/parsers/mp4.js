@@ -41,6 +41,7 @@
  */
 
 import { latin1, text, trimField } from '../bytes.js';
+import { scanForC2pa, isC2paUuid } from '../provenance/c2pa.js';
 import {
   createReport,
   addError,
@@ -252,6 +253,32 @@ async function walk(source, report) {
         found.ilst = await readIlst(source, bodyStart, size - headerSize);
       } else if (type === 'trak') {
         found.trackCount++;
+      } else if (type === 'uuid' && !report.metadata.c2pa) {
+        // A `uuid` box is where ISO BMFF carries a C2PA manifest store.
+        try {
+          const uuidView = await source.read(bodyStart, 16);
+          const uuidHex = [...new Uint8Array(uuidView.buffer, uuidView.byteOffset, uuidView.byteLength)]
+            .map((b) => b.toString(16).padStart(2, '0')).join('');
+          const payloadStart = bodyStart + 16;
+          const payloadSize = bodyEnd - payloadStart;
+          if (isC2paUuid(uuidHex)) {
+            report.metadata.c2pa = {
+              present: true,
+              location: 'a uuid box carrying the C2PA identifier',
+              bytes: payloadSize,
+              evidence: 'the C2PA UUID for ISO base media files',
+              signatureVerified: false,
+              note: 'Kingfisher found this manifest but did not check its signature. '
+                + 'Confirming who signed it, and that it has not been altered, needs a '
+                + 'dedicated Content Credentials tool.',
+            };
+          } else {
+            const found2 = await scanForC2pa(source, payloadStart, payloadSize, 'a uuid box');
+            if (found2) report.metadata.c2pa = found2;
+          }
+        } catch {
+          // Never let a provenance probe break the parse.
+        }
       }
 
       if (CONTAINERS.has(type) || FULL_CONTAINERS.has(type)) {

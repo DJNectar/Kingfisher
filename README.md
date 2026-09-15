@@ -57,6 +57,19 @@ tags, and embedded artwork (described, not extracted).
 **Identification is by magic number, not file extension.** A file renamed to
 `.wav` that is really an MP3 is read correctly and reported as what it is.
 
+**Origin and provenance.** Every report says what the file records about how it
+was made: a C2PA / Content Credentials manifest where one is embedded, and any
+encoder or software field naming a tool worth knowing about (generative music
+and speech services, stem separators, automated mastering). Two limits are
+stated in the app itself rather than buried here:
+
+- A manifest is **located, never verified.** Checking a signature needs
+  cryptography and a trust list; this app does neither, so it reports that the
+  file makes a provenance claim, not that the claim holds.
+- **Finding nothing means nothing.** Metadata is stripped by ordinary work and
+  can be forged, and inaudible watermarks live in the audio rather than the
+  tags. An empty provenance section is never presented as a clean result.
+
 Some deliberate absences:
 
 - **Bit depth is blank for lossy formats**, because they have none. Showing the

@@ -479,6 +479,61 @@ function metadataSections(report, collapsed) {
     )), { open: false }));
   }
 
+  // Provenance is rendered from its own analysis, not from `metadata`, and is
+  // always present — its absence must never be readable as a clean result.
+  const prov = report.provenance;
+  if (prov?.checked) {
+    const body = el('div', {});
+
+    if (prov.c2pa?.present) {
+      body.append(el('div', { class: 'provenance-found' }, [
+        el('strong', { text: 'This file carries Content Credentials (C2PA). ' }),
+        `A signed provenance manifest is embedded in ${prov.c2pa.location}.`,
+      ]));
+      body.append(kv([
+        ['Found in', prov.c2pa.location],
+        ['Evidence', prov.c2pa.evidence],
+        ['Manifest size', formatBytes(prov.c2pa.bytes)],
+        ['Signature checked', 'No'],
+      ]));
+      body.append(el('p', { class: 'muted', text: prov.c2pa.note }));
+    }
+
+    if (prov.toolMatches.length) {
+      body.append(el('div', { class: 'provenance-found' }, [
+        el('strong', { text: 'Metadata in this file names a tool of interest. ' }),
+        'This is what the file says about itself — see the note below on how much that is worth.',
+      ]));
+      body.append(table(
+        ['Tool', 'What it is', 'Named in', 'Value'],
+        prov.toolMatches.map((t) => [t.tool, t.kind, t.field, t.value]),
+      ));
+    }
+
+    if (prov.originFields.length) {
+      body.append(el('h4', { style: 'margin:14px 0 6px;font-size:13px', text: 'What the file records about how it was made' }));
+      body.append(kv(prov.originFields.map((f) => [f.label, f.value])));
+    } else {
+      body.append(el('p', { class: 'muted', text: 'This file records nothing about what made it.' }));
+    }
+
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'How to read this. ' }),
+      'Everything here is what the file says about itself. Metadata is removed by '
+      + 'ordinary work — a re-encode, a bounce through a DAW, an upload — and it can be '
+      + 'copied or typed in by hand. So finding nothing here tells you nothing at all, '
+      + 'and finding something is a claim rather than proof. Some tools also mark audio '
+      + 'with inaudible watermarks in the sound itself rather than in the metadata; '
+      + "Kingfisher cannot see those, and detecting them needs the tool vendor's own software.",
+    ]));
+
+    out.push(section(
+      'Origin and provenance',
+      body,
+      { open: Boolean(prov.c2pa?.present || prov.toolMatches.length) },
+    ));
+  }
+
   if (m.pictures?.length) {
     out.push(section('Embedded artwork', table(
       ['Type', 'Format', { label: 'Size', class: 'num' }, { label: 'Data', class: 'num' }, 'Description'],

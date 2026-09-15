@@ -32,6 +32,7 @@ import { oggParser } from './parsers/ogg.js';
 import { mp3Parser } from './parsers/mp3.js';
 import { scanAudio } from './audio/pcm.js';
 import { runRules } from './qc/engine.js';
+import { analyseProvenance } from './provenance/provenance.js';
 import { createReport, addError, finalizeStatus } from './report.js';
 
 const parsers = [wavParser, aiffParser, mp4Parser, flacParser, cafParser, oggParser, mp3Parser];
@@ -101,6 +102,7 @@ export async function inspectSource(source, fileInfo = {}, options = {}) {
       }. No technical details are reported for it.`,
     );
     finalizeStatus(report);
+    report.provenance = analyseProvenance(report);
     // Rules run here too: an unreadable file still deserves the plain-language
     // "this could not be read" observation rather than an empty report.
     report.observations = runRules(report);
@@ -121,6 +123,11 @@ export async function inspectSource(source, fileInfo = {}, options = {}) {
       report.audio = null;
     }
   }
+
+  // What the file says about its own origin. Runs before the rules so that a
+  // rule can comment on it, and like the rules it reads the finished report
+  // rather than the bytes.
+  report.provenance = analyseProvenance(report);
 
   report.observations = runRules(report);
   finalizeStatus(report);

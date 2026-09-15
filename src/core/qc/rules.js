@@ -32,6 +32,7 @@ export const THRESHOLDS = {
 };
 
 const fmtDb = (v) => (v === -Infinity ? '-∞' : v.toFixed(2));
+const truncate = (s, n) => (String(s).length <= n ? String(s) : `${String(s).slice(0, n - 1)}…`);
 const fmtHz = (v) => `${v.toLocaleString('en-US')} Hz`;
 
 export const RULES = [
@@ -442,6 +443,59 @@ export const RULES = [
         detail: `This file is large, so levels were measured from ${(a.coverage * 100).toFixed(
           1,
         )}% of the audio, spread evenly across its length. Peaks outside those sections would not have been seen.`,
+      };
+    },
+  },
+  // ------------------------------------------------------------- provenance
+  {
+    /**
+     * A signed provenance manifest is the strongest origin evidence a file can
+     * carry — and the observation must say, in the same breath, that this app
+     * located it without verifying it.
+     */
+    id: 'provenance-manifest',
+    severity: SEVERITY.INFO,
+    evaluate(r) {
+      const c2pa = r.provenance?.c2pa;
+      if (!c2pa?.present) return null;
+      return {
+        id: 'provenance-manifest',
+        title: 'This file carries Content Credentials',
+        detail: `A C2PA provenance manifest is embedded in ${c2pa.location} (${c2pa.evidence}). `
+          + 'That is a signed record of what made this file and what has edited it since. '
+          + 'Kingfisher can see that the manifest is here but does not check its signature, '
+          + 'so treat this as "the file makes a provenance claim", not as a verified one. '
+          + 'A dedicated Content Credentials tool can confirm who signed it.',
+      };
+    },
+  },
+  {
+    /**
+     * A tool named in the metadata. Phrased as what the FIELD says, because
+     * that is all that has been established: tags are copied, forged and
+     * stripped in ordinary use.
+     */
+    id: 'provenance-tool-named',
+    severity: SEVERITY.NOTICE,
+    evaluate(r) {
+      const matches = r.provenance?.toolMatches;
+      if (!matches?.length) return null;
+
+      const byTool = new Map();
+      for (const m of matches) if (!byTool.has(m.tool)) byTool.set(m.tool, m);
+      const listed = [...byTool.values()];
+
+      return {
+        id: 'provenance-tool-named',
+        title: listed.length === 1
+          ? `Metadata names ${listed[0].tool}`
+          : `Metadata names ${listed.length} tools of interest`,
+        detail: `${listed
+          .map((m) => `"${m.field}" contains "${truncate(m.value, 80)}", which names ${m.tool}, ${m.kind}`)
+          .join('; ')}. This is what the file says about itself. A tag like this can be `
+          + 'left by the tool, copied from another file, or typed in by hand, and it is '
+          + 'removed by ordinary work such as a re-encode or a bounce — so it is evidence '
+          + 'worth knowing, not proof of how the audio was made.',
       };
     },
   },
