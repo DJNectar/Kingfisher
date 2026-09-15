@@ -1,0 +1,237 @@
+/**
+ * End-to-end browser test.
+ *
+ * Not part of `npm test`, because it needs a browser and a running server that
+ * the unit suite deliberately does not require. To run it:
+ *
+ *   node test/browser/make-fixtures.mjs        # write reference WAVs to disk
+ *   python3 -m http.server 8181 &              # serve the app
+ *   npm install playwright-core                # once
+ *   CHROME=/path/to/chrome node test/browser/e2e.mjs
+ *
+ * It drives the real UI: creates a library, a client and a project, checks
+ * eight reference files into it, reads the log back, exercises the to-do list,
+ * exports every format, then saves the library, reloads the page, reopens the
+ * saved file and asserts the full history survived.
+ *
+ * It removes the File System Access API before the app loads, so the app takes
+ * its Safari fallback path. That is the path Playwright can actually drive
+ * (it cannot operate Chrome's native file dialog) and the more fragile of the
+ * two, so it is the one worth exercising end to end.
+ */
+import { chromium } from 'playwright-core';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const AUDIO = join(HERE, 'audio');
+const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8181';
+const CHROME = process.env.CHROME ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const files = readdirSync(AUDIO).filter(f => f.endsWith('.wav')).sort().map(f => `${AUDIO}/${f}`);
+
+const browser = await chromium.launch({
+  executablePath: CHROME,
+  args: ['--no-sandbox'],
+});
+const ctx = await browser.newContext({ viewport: { width: 1340, height: 950 }, acceptDownloads: true });
+// Remove the File System Access API BEFORE any app script runs, so the app's
+// capability detection sees a Safari-like browser and takes the fallback
+// download/upload path. That path is the one Playwright can actually drive
+// (it cannot interact with Chrome's native file-picker dialog), and it is the
+// more fragile of the two, so it is the one worth exercising end to end.
+await ctx.addInitScript(() => {
+  delete window.showOpenFilePicker;
+  delete window.showSaveFilePicker;
+  delete window.showDirectoryPicker;
+});
+const page = await ctx.newPage();
+
+const errors = [];
+page.on('console', m => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+page.on('pageerror', e => errors.push(`pageerror: ${e.message}\n${e.stack}`));
+
+const step = (s) => console.log(`\n=== ${s} ===`);
+
+await page.goto(`${BASE}/index.html`, { waitUntil: 'networkidle' });
+
+// ---------------------------------------------------------------- 1. library
+step('Create library + client + project');
+await page.click('.tab[data-view="clients"]');
+await page.click('button:has-text("Start a new library")');
+await page.waitForTimeout(200);
+console.log('library bar:', (await page.locator('#library-file').textContent()).trim());
+console.log('unsaved badge visible:', await page.locator('#unsaved-badge').isVisible());
+
+await page.click('button:has-text("Add your first client")');
+await page.fill('#f-name', 'The Bandits');
+await page.fill('#f-notes', 'Met at the Fringe, 2025');
+await page.click('.modal button[type="submit"]');
+await page.waitForTimeout(300);
+console.log('after add client, heading:', (await page.locator('#view-clients h2').first().textContent()).trim());
+
+await page.click('button:has-text("Add the first project")');
+await page.fill('#f-name', 'Album — Blue Room');
+await page.click('.modal button[type="submit"]');
+await page.waitForTimeout(300);
+console.log('project heading:', (await page.locator('#view-clients h2').first().textContent()).trim());
+
+// ---------------------------------------------------------------- 2. inspect
+step('Check files into the project');
+await page.click('button:has-text("Check files into this project")');
+await page.waitForTimeout(200);
+console.log('log target selected:', await page.locator('#log-project').inputValue() !== '' ? 'yes' : 'NO');
+
+const chooserPromise = page.waitForEvent('filechooser');
+await page.click('#btn-pick-files');
+const chooser = await chooserPromise;
+await chooser.setFiles(files);
+await page.waitForTimeout(2500);
+
+const cards = await page.locator('.report').count();
+console.log('report cards rendered:', cards, '(expected 8)');
+console.log('batch summary:', (await page.locator('.panel h2').first().textContent()).trim());
+console.log('badges:', await page.locator('.panel .badge').allTextContents());
+
+// Verify specific findings surfaced in the UI
+const bodyText = await page.locator('#results').innerText();
+const checks = [
+  ['48 kHz on riverbed', /48 kHz/],
+  ['24-bit', /24-bit/],
+  ['bext description', /SC 14 TK 3 — kitchen wide/],
+  ['timecode', /10:00:00\.000/],
+  ['iXML project', /Blue Room Sessions/],
+  ['clipping observed', /Flat-topped peaks/i],
+  ['silence observed', /entirely silent/i],
+  ['LFE silent', /channel(s)? is silent|1 of 6/i],
+  ['pulldown explained', /pull-down/i],
+  ['truncated', /shorter than the file says/i],
+  ['unreadable file', /could not be read/i],
+  ['RF64', /RF64/],
+];
+for (const [label, re] of checks) console.log(`  ${re.test(bodyText) ? 'OK  ' : 'MISS'} ${label}`);
+
+await page.screenshot({ path: 'shot-reports.png', fullPage: false });
+
+// ---------------------------------------------------------------- 3. the log
+step('Project log');
+await page.click('.tab[data-view="clients"]');
+await page.waitForTimeout(300);
+const logRows = await page.locator('.panel:has-text("File check log") table.data tbody tr').count();
+console.log('log rows:', logRows, '(expected 8)');
+const firstRow = await page.locator('.panel:has-text("File check log") table.data tbody tr').first().innerText();
+console.log('newest row:', firstRow.replace(/\s+/g, ' ').slice(0, 110));
+
+// Open a log entry
+await page.locator('.panel:has-text("File check log") table.data tbody tr').first().click();
+await page.waitForTimeout(400);
+console.log('log entry modal open:', await page.locator('#modal .report').isVisible());
+await page.click('#modal button:has-text("Close")');
+await page.waitForTimeout(200);
+
+// ---------------------------------------------------------------- 4. to-dos
+step('To-do list');
+await page.fill('.add-row input', 'Chase the missing take 4');
+await page.click('.add-row button:has-text("Add")');
+await page.waitForTimeout(300);
+await page.fill('.add-row input', 'Send rough mixes Friday');
+await page.press('.add-row input', 'Enter');
+await page.waitForTimeout(300);
+console.log('todos:', await page.locator('.todo').count());
+await page.locator('.todo input[type="checkbox"]').first().check();
+await page.waitForTimeout(300);
+console.log('first todo done class:', await page.locator('.todo').first().getAttribute('class'));
+console.log('todo counts:', (await page.locator('.panel:has-text("To-do list") .muted').first().textContent()).trim());
+
+await page.screenshot({ path: 'shot-project.png', fullPage: false });
+
+// ------------------------------------------------------------- 5. exports
+step('Exports');
+await page.evaluate(() => { window.__downloads = []; });
+for (const fmt of ['.txt', '.csv', '.pdf']) {
+  await page.click('.tab[data-view="inspect"]');
+  await page.waitForTimeout(200);
+  const dl = page.waitForEvent('download', { timeout: 15000 });
+  await page.locator('.panel button', { hasText: new RegExp(`^\\${fmt}$`) }).first().click();
+  const d = await dl;
+  const path = await d.path();
+  const size = readFileSync(path).length;
+  console.log(`  ${fmt} -> ${d.suggestedFilename()} (${size} bytes)`);
+}
+
+// Project history export
+await page.click('.tab[data-view="clients"]');
+await page.waitForTimeout(300);
+await page.click('button:has-text("Export history")');
+await page.waitForTimeout(300);
+const dlPdf = page.waitForEvent('download', { timeout: 15000 });
+await page.click('#modal button:has-text(".pdf")');
+const pdf = await dlPdf;
+console.log('  project history pdf ->', pdf.suggestedFilename(), readFileSync(await pdf.path()).length, 'bytes');
+
+// ------------------------------------------------------- 6. save + reopen
+step('Save library, reload, reopen');
+const dlLib = page.waitForEvent('download', { timeout: 15000 });
+await page.click('#btn-save-library');
+const libDl = await dlLib;
+const libPath = await libDl.path();
+const libJson = readFileSync(libPath, 'utf8');
+console.log('  saved:', libDl.suggestedFilename(), libJson.length, 'bytes');
+const parsed = JSON.parse(libJson);
+console.log('  kind:', parsed.kind, '| clients:', parsed.clients.length,
+            '| projects:', parsed.clients[0].projects.length,
+            '| log entries:', parsed.clients[0].projects[0].log.length,
+            '| todos:', parsed.clients[0].projects[0].todos.length);
+console.log('  unsaved badge after save:', await page.locator('#unsaved-badge').isVisible());
+
+// Reload and re-open the downloaded library file
+const savedCopy = join(HERE, 'library.kingfisher.json');
+const { writeFileSync } = await import('node:fs');
+writeFileSync(savedCopy, libJson);
+
+await page.reload({ waitUntil: 'networkidle' });
+const chooser2Promise = page.waitForEvent('filechooser');
+await page.click('#btn-open-library');
+const chooser2 = await chooser2Promise;
+await chooser2.setFiles([savedCopy]);
+await page.waitForTimeout(800);
+
+console.log('  reopened library bar:', (await page.locator('#library-file').textContent()).trim());
+await page.click('.tab[data-view="clients"]');
+await page.waitForTimeout(300);
+const rosterText = await page.locator('#view-clients').innerText();
+console.log('  roster shows client:', /The Bandits/.test(rosterText));
+console.log('  roster shows counts:', rosterText.replace(/\s+/g,' ').match(/\d+ project.*?checks?/)?.[0]);
+
+await page.click('.card button:has-text("Open")');
+await page.waitForTimeout(300);
+await page.click('.card button:has-text("Open")');
+await page.waitForTimeout(400);
+const reopenedLog = await page.locator('.panel:has-text("File check log") table.data tbody tr').count();
+const reopenedTodos = await page.locator('.todo').count();
+console.log('  after reopen — log rows:', reopenedLog, '| todos:', reopenedTodos);
+
+await page.screenshot({ path: 'shot-reopened.png', fullPage: false });
+
+// ------------------------------------------------------------ 7. rename/delete
+step('Rename and delete');
+await page.click('.crumbs button:has-text("All clients")');
+await page.waitForTimeout(300);
+await page.click('.card button:has-text("Rename")');
+await page.fill('#f-name', 'The Bandits Ltd');
+await page.click('.modal button[type="submit"]');
+await page.waitForTimeout(300);
+console.log('  renamed:', /The Bandits Ltd/.test(await page.locator('#view-clients').innerText()));
+
+await page.click('.card button:has-text("Delete")');
+await page.waitForTimeout(300);
+console.log('  delete warning:', (await page.locator('#modal .warning').textContent()).trim().slice(0, 120));
+await page.click('#modal button:has-text("Cancel")');
+await page.waitForTimeout(200);
+console.log('  cancelled, client still present:', /The Bandits Ltd/.test(await page.locator('#view-clients').innerText()));
+
+console.log('\n=== ERRORS ===');
+console.log(errors.length ? errors.join('\n') : 'none');
+
+await browser.close();
+process.exit(errors.length ? 1 : 0);

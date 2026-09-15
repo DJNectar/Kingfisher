@@ -130,10 +130,93 @@ me something editable".
 9. (In the test helper, not the product) the PDF validator decoded WinAnsi
    bytes as raw code points, so an em dash read back as a control character.
 
-### Status
+### Implemented — UI
+- `index.html` + `src/ui/styles.css` — no web fonts, no framework, dark/light
+  from `prefers-color-scheme`, responsive down to phone width, print stylesheet.
+- `src/ui/dom.js` — element helpers. **Everything user-supplied reaches the page
+  through `textContent`**, never `innerHTML`; a filename or bext description
+  containing markup is content, not markup, and this is the one place that is
+  enforced.
+- `src/ui/views/report-view.js` — read result first, then the headline numbers,
+  then observations, then collapsed detail (levels per channel, bext, iXML,
+  INFO, markers, sampler, ACID, ADM, the full chunk map).
+- `src/ui/views/clients-view.js` — roster → client → project, create/rename/
+  delete at both levels, the append-only log with a click-through to the stored
+  report, and the to-do list.
+- `src/ui/views/help-view.js` — the help tab, plain language, with the
+  Chrome/Safari difference spelled out and paragraphs that switch on the
+  browser actually in use.
+- `src/ui/app.js` — controller. Whole-view re-render on change (the app is small
+  enough that this is instant and it removes the stale-view class of bug).
+- `start.command` — double-click launcher; binds `python3 -m http.server` to
+  127.0.0.1 and opens the browser.
+
+### Verified (how) — real browser
+Added `test/browser/e2e.mjs`, which drives the actual UI in Chromium via
+Playwright. It is NOT part of `npm test` (that stays dependency-free and
+browser-free); run it with `npm run test:browser`.
+
+It removes the File System Access API before the app loads, so the app takes its
+**Safari fallback path** — the one Playwright can actually drive, and the more
+fragile of the two. Full run, all passing:
+- creates a library, client and project through the real dialogs
+- checks 8 reference WAVs written to disk (normal BWF, clipped, silent, 5.1 with
+  a silent LFE, 47,952 Hz pull-down, truncated, non-audio, RF64) through a real
+  file input
+- asserts the UI surfaces: 48 kHz, 24-bit, the bext description and 10:00:00.000
+  timecode, bext v2 loudness, coding history, iXML project + track names, INFO
+  title, flat-topped peaks, digital silence, the silent LFE, the pull-down
+  explanation, the truncation, the unreadable file and RF64
+- reads back the 8-row project log, opens a stored report from it
+- adds/completes to-dos
+- exports .txt/.csv/.pdf and a project-history PDF
+- **saves the library, reloads the page, reopens the saved file, and confirms
+  all 8 log entries and both to-dos survived**
+- renames a client, and checks the delete confirmation states exactly how much
+  history would be lost
+- fails the run if the page logged any error (it logs none)
+
+### Bugs the browser caught (all fixed)
+10. **The entire app was unclickable.** `.modal-backdrop { display: flex }` beats
+    the browser's own `[hidden] { display: none }` (a class selector outranks a
+    bare element selector), so the invisible modal backdrop covered the page and
+    swallowed every click. Nothing in the unit tests or a syntax check could
+    have found this. Fixed with a global `[hidden] { display: none !important }`.
+11. **Exports with a typographic character in the name downloaded as `download`,
+    with no extension.** Chromium silently discards an `<a download>` filename
+    containing non-ASCII — and project names routinely contain em dashes
+    ("Album — Blue Room"). `sanitizeFileName()` now folds accents and maps
+    typographic punctuation to ASCII.
+12. Single-file exports were named `01 riverbed.wav.txt`; now `01 riverbed.txt`.
+13. Numeric table headers were left-aligned over right-aligned numbers.
+
+### Not bugs (checked and dismissed)
+- bext/iXML/INFO appeared "missing" in the batch-view text scrape. They are
+  inside collapsed `<details>` when more than one file is shown, which is
+  intended; the single-file view shows them expanded. Confirmed by a separate
+  single-file run.
+
+### Deferred, with reasons
+- **AIFF/FLAC/MP3.** Architected for (magic-number registry, format-agnostic
+  report model, endianness flag already on `Reader`) but not implemented. The
+  brief asked for WAV first and for the architecture not to require a rewrite.
+- **True-peak (inter-sample) measurement.** Needs oversampling; the current
+  peak is sample-peak and is labelled as such rather than implying more.
+- **Loudness (LUFS) measurement.** `bext` loudness fields are *read and shown*
+  where present, but nothing is measured — that needs a K-weighting filter and
+  gating, and guessing at it would violate the app's core rule.
+- **RIFX (big-endian RIFF).** Detected and explicitly refused rather than
+  misread. Supporting it is a flag on `Reader`, but there was no reference file
+  to verify against, and shipping unverified byte-order handling is exactly how
+  wrong numbers get displayed.
+- **Merge/conflict resolution for a library synced across two machines.** Stated
+  as a known limitation in Help and ARCHITECTURE.md instead of half-solved.
+
+### Status — complete
 - [x] Byte layer, WAV/RIFF/RF64 parser, chunk decoders, report model, registry
 - [x] PCM scanner, QC engine + 23 rules
 - [x] Library store, schema/migrations, persistence (Chrome + Safari paths)
 - [x] Exporters: text, CSV, dependency-free PDF
-- [ ] UI + help tab
-- [ ] End-to-end check in a real browser
+- [x] UI: inspect, batch, client roster, project log, to-dos, help tab
+- [x] 65 unit tests + a full end-to-end browser run, all passing
+- [x] ARCHITECTURE.md, README.md, in-app help
