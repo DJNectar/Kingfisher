@@ -41,7 +41,7 @@
  */
 
 import { latin1, text, trimField } from '../bytes.js';
-import { scanForC2pa, isC2paUuid } from '../provenance/c2pa.js';
+import { scanForC2pa, isC2paUuid, readAssertions } from '../provenance/c2pa.js';
 import {
   createReport,
   addError,
@@ -262,11 +262,23 @@ async function walk(source, report) {
           const payloadStart = bodyStart + 16;
           const payloadSize = bodyEnd - payloadStart;
           if (isC2paUuid(uuidHex)) {
+            // Read what the manifest DECLARES, not merely that it exists. This
+            // is the strongest provenance signal available, and skipping it
+            // here would throw away the very thing the uuid box is worth
+            // finding.
+            let assertions = null;
+            try {
+              const wide = await source.read(payloadStart, Math.min(payloadSize, 64 * 1024));
+              assertions = readAssertions(new Uint8Array(wide.buffer, wide.byteOffset, wide.byteLength));
+            } catch {
+              // Leave the manifest reported without its declarations.
+            }
             report.metadata.c2pa = {
               present: true,
               location: 'a uuid box carrying the C2PA identifier',
               bytes: payloadSize,
               evidence: 'the C2PA UUID for ISO base media files',
+              assertions,
               signatureVerified: false,
               note: 'Kingfisher found this manifest but did not check its signature. '
                 + 'Confirming who signed it, and that it has not been altered, needs a '

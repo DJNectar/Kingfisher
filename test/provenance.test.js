@@ -36,12 +36,15 @@ test('a generator named in an MP3 encoder field is reported as a claim', async (
   assert.match(match.kind, /generative music/);
   assert.match(match.value, /Suno v4/);
 
-  const obs = r.observations.find((o) => o.id === 'provenance-tool-named');
-  assert.ok(obs, 'an observation should be raised');
-  assert.match(obs.title, /Suno/);
-  // It must describe the claim, never assert how the audio was made.
-  assert.match(obs.detail, /what the file says about itself/i);
-  assert.doesNotMatch(obs.detail, /\bthis (is|was) (an? )?(AI|generated)/i);
+  const obs = r.observations.find((o) => o.id === 'possible-ai-generated');
+  assert.ok(obs, 'the flag should be raised');
+  assert.match(obs.title, /Possibly AI-generated/i);
+  // The reasons must be given, so the judgement can be checked.
+  assert.match(obs.detail, /What raised this/i);
+  assert.match(obs.detail, /names Suno/i);
+  // And it must never harden into a determination.
+  assert.doesNotMatch(obs.title, /^This (is|was) AI/i);
+  assert.match(obs.detail, /what the file says about itself|did not verify/i);
 });
 
 test('a generator named in a FLAC Vorbis comment is found too', async () => {
@@ -86,7 +89,7 @@ test('an ordinary file names its encoder and matches no tool', async () => {
   assert.equal(r.provenance.outcome, 'no-known-tool');
   assert.equal(r.provenance.toolMatches.length, 0);
   assert.ok(r.provenance.originFields.length > 0, 'it still records what made it');
-  assert.ok(!r.observations.some((o) => o.id === 'provenance-tool-named'));
+  assert.ok(!r.observations.some((o) => o.id === 'possible-ai-generated'));
 });
 
 test('a file with no origin metadata reports that, and claims nothing', async () => {
@@ -246,4 +249,127 @@ test('analyseProvenance works on a bare report object, with no parser involved',
 
   assert.equal(provenance.outcome, 'tool-named');
   assert.ok(provenance.toolMatches.some((m) => m.tool === 'Udio'));
+});
+
+// -------------------------------------------------- the flag and its reasons
+
+test('a C2PA manifest declaring generative origin is the strongest signal', async () => {
+  const manifest = F.c2paManifestBytes({ extra: 0 });
+  const declaration = new TextEncoder().encode(
+    'http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia'
+    + '"claim_generator":"Suno/4.0"',
+  );
+  const bytes = F.minimalM4a({
+    extraTopLevel: [F.c2paUuidBox(F.concat(manifest, declaration))],
+  });
+  const r = await inspect(bytes, { name: 'declared.m4a' });
+
+  const a = r.provenance.assessment;
+  assert.equal(a.flag, 'declared');
+  assert.match(a.headline, /declares that it was AI-generated/i);
+  assert.ok(a.reasons.some((x) => /generative model/i.test(x.text)));
+  assert.ok(a.reasons.some((x) => /Suno\/4\.0/.test(x.text)));
+
+  // Even here it stays a claim: the signature was not checked.
+  assert.equal(r.metadata.c2pa.signatureVerified, false);
+  assert.ok(a.limits.some((l) => /did not verify the signature/i.test(l)));
+});
+
+test('the flag is graded: a dedicated encoder field outranks free text', () => {
+  const inField = analyseProvenance({
+    format: {},
+    metadata: { id3v2: { frames: { TSSE: { value: 'Udio' } } } },
+  }).assessment;
+  assert.equal(inField.confidence, 'moderate');
+  assert.match(inField.headline, /Possibly AI-generated/i);
+
+  const inComment = analyseProvenance({
+    format: {},
+    metadata: { id3v2: { frames: { COMM: { value: 'sounds a bit like udio to me' } } } },
+  }).assessment;
+  assert.equal(inComment.confidence, 'weak');
+  assert.match(inComment.headline, /Faint signs/i);
+  assert.ok(
+    inComment.reasons.some((r) => /free-text/i.test(r.detail ?? '')),
+    'free text should be marked as weaker evidence',
+  );
+});
+
+test('AI-assisted processing does NOT raise the AI-generated flag', async () => {
+  const bytes = F.riff([
+    F.fmtChunk({ channels: 2, sampleRate: 48000, bitsPerSample: 24 }),
+    F.listInfoChunk({ ISFT: 'Demucs v4' }),
+    F.chunk('data', F.pcmData({ frames: 4800, channels: 2, bitsPerSample: 24, gen: sine() })),
+  ]);
+  const r = await inspect(bytes, { name: 'separated.wav' });
+
+  assert.equal(r.provenance.assessment.flag, 'none', 'separation is not generation');
+  assert.ok(!r.observations.some((o) => o.id === 'possible-ai-generated'));
+
+  // It is still worth mentioning, just as a different kind of claim.
+  const note = r.observations.find((o) => o.id === 'ai-assisted-processing');
+  assert.ok(note);
+  assert.match(note.detail, /rather than generating it/i);
+});
+
+test('a generative phrase in a real comment frame is picked up', async () => {
+  const tag = F.id3v2TagWithRaw(
+    [['TIT2', 'Midnight Drive']],
+    [F.id3CommFrame('ai-generated, prompt: 80s synthwave night drive')],
+  );
+  const bytes = F.mp3File({ id3v2: tag, frames: Array.from({ length: 20 }, () => F.mp3Frame({})) });
+  const r = await inspect(bytes, { name: 'prompted.mp3' });
+
+  assert.match(r.metadata.id3v2.frames.COMM.value, /ai-generated/);
+  const a = r.provenance.assessment;
+  assert.equal(a.flag, 'possible');
+  assert.ok(a.reasons.some((x) => /"AI-generated"/i.test(x.text)));
+});
+
+test('with nothing found, the flag says so WITHOUT implying the file is clean', async () => {
+  const bytes = F.riff([
+    F.fmtChunk({ channels: 2, sampleRate: 48000, bitsPerSample: 24 }),
+    F.listInfoChunk({ ISFT: 'Pro Tools 2026.3' }),
+    F.chunk('data', F.pcmData({ frames: 4800, channels: 2, bitsPerSample: 24, gen: sine() })),
+  ]);
+  const r = await inspect(bytes, { name: 'ordinary.wav' });
+  const a = r.provenance.assessment;
+
+  assert.equal(a.flag, 'none');
+  assert.equal(a.reasons.length, 0);
+  // The empty case must carry its own caveats rather than being silent.
+  assert.ok(a.limits.length >= 2);
+  assert.ok(a.limits.some((l) => /not a clean bill of health/i.test(l)));
+  assert.ok(a.limits.some((l) => /watermark/i.test(l)));
+
+  const text = renderFileReport(r);
+  assert.doesNotMatch(text, /not AI|human[- ]made|authentic|verified as/i);
+});
+
+test('the reported confidence never reads as certainty', () => {
+  const cases = [
+    { metadata: { id3v2: { frames: { TSSE: { value: 'Suno v4' } } } }, format: {} },
+    { metadata: { id3v2: { frames: { COMM: { value: 'made with musicgen' } } } }, format: {} },
+    {
+      metadata: {
+        c2pa: {
+          present: true, location: 'a uuid box',
+          assertions: {
+            generativeDeclared: true,
+            digitalSourceTypes: [{ match: 'trainedalgorithmicmedia', label: 'created by a generative model', generative: true, strength: 'strong' }],
+            claimGenerator: null,
+          },
+        },
+      },
+      format: {},
+    },
+  ];
+
+  for (const report of cases) {
+    const a = analyseProvenance(report).assessment;
+    // "declares", "possibly", "signs" — never a bare assertion of fact.
+    assert.doesNotMatch(a.headline, /^This file is AI/i);
+    assert.doesNotMatch(a.headline, /definitely|certainly|confirmed|proven/i);
+    assert.ok(a.limits.length > 0, 'every flagged outcome must carry its limits');
+  }
 });

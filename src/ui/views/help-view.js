@@ -125,6 +125,16 @@ export function renderHelp(host) {
       h3('provenance', 'Where a file came from'),
       el('p', { text: 'Every report has an "Origin and provenance" section. It answers one question: what does this file say about how it was made? That is a narrower question than it sounds, and the difference matters.' }),
 
+      el('h4', { text: 'The flag at the top' }),
+      el('p', { text: 'The section leads with a plain answer and the reasons behind it, so you can check the reasoning rather than take it on trust. There are four possible headlines:' }),
+      ul([
+        el('span', {}, [el('strong', { text: '"This file declares that it was AI-generated"' }), ' — its own signed Content Credentials say so. This is the strongest signal available, because it is the file\'s own record rather than an inference.']),
+        el('span', {}, [el('strong', { text: '"Possibly AI-generated"' }), ' — a field that records what software wrote the file names a generation tool, or the metadata says something like "AI-generated".']),
+        el('span', {}, [el('strong', { text: '"Faint signs of AI generation"' }), ' — something turned up, but only in free text, where it might just as easily be describing the audio as recording what made it.']),
+        el('span', {}, [el('strong', { text: '"No signs of AI generation were found"' }), ' — nothing turned up. Read the next paragraph before making anything of that.']),
+      ]),
+      el('p', { text: 'Generation and processing are kept apart. A file made by Suno gets the flag; a file that has been through a stem separator or an automated mastering service gets a separate note, because something was done to that recording rather than the recording being made by a machine.' }),
+
       el('h4', { text: 'Content Credentials' }),
       el('p', { text: 'Some files carry a signed provenance record — the C2PA standard, also called Content Credentials — listing what created the file and what has edited it since. Adobe, OpenAI, Microsoft and Google all write these. When one is present, Kingfisher says so and shows where it is.' }),
       el('div', { class: 'callout' }, [

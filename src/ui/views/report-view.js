@@ -484,6 +484,28 @@ function metadataSections(report, collapsed) {
   const prov = report.provenance;
   if (prov?.checked) {
     const body = el('div', {});
+    const a = prov.assessment;
+
+    // The judgement first, with the reasons that produced it, so the section
+    // answers the question instead of leaving it to be assembled from fields.
+    if (a) {
+      const flagged = a.flag !== 'none';
+      body.append(el('div', { class: `ai-flag ai-flag-${flagged ? a.flag : 'none'}` }, [
+        el('div', { class: 'ai-flag-headline', text: a.headline }),
+        a.confidence ? el('div', { class: 'ai-flag-confidence', text: `Confidence: ${a.confidence}` }) : null,
+        a.reasons.length
+          ? el('div', {}, [
+            el('div', { class: 'ai-flag-label', text: 'What raised this' }),
+            el('ul', { class: 'ai-flag-reasons' }, a.reasons.map((reason) =>
+              el('li', {}, [
+                reason.text,
+                reason.detail ? el('div', { class: 'ai-flag-detail', text: reason.detail }) : null,
+              ]))),
+          ])
+          : null,
+        el('ul', { class: 'ai-flag-limits' }, a.limits.map((l) => el('li', { text: l }))),
+      ]));
+    }
 
     if (prov.c2pa?.present) {
       body.append(el('div', { class: 'provenance-found' }, [
@@ -494,8 +516,12 @@ function metadataSections(report, collapsed) {
         ['Found in', prov.c2pa.location],
         ['Evidence', prov.c2pa.evidence],
         ['Manifest size', formatBytes(prov.c2pa.bytes)],
+        ['Declares', prov.c2pa.assertions?.digitalSourceTypes?.length
+          ? prov.c2pa.assertions.digitalSourceTypes.map((t) => t.label).join('; ')
+          : null],
+        ['Produced by', prov.c2pa.assertions?.claimGenerator ?? null],
         ['Signature checked', 'No'],
-      ]));
+      ].filter(([, v]) => v !== null)));
       body.append(el('p', { class: 'muted', text: prov.c2pa.note }));
     }
 
@@ -530,7 +556,7 @@ function metadataSections(report, collapsed) {
     out.push(section(
       'Origin and provenance',
       body,
-      { open: Boolean(prov.c2pa?.present || prov.toolMatches.length) },
+      { open: Boolean(a && a.flag !== 'none') },
     ));
   }
 

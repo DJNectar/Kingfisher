@@ -471,31 +471,47 @@ export const RULES = [
   },
   {
     /**
-     * A tool named in the metadata. Phrased as what the FIELD says, because
-     * that is all that has been established: tags are copied, forged and
-     * stripped in ordinary use.
+     * The headline the user actually wants: is there reason to think this was
+     * generated, and what raised it.
+     *
+     * The wording carries the confidence rather than burying it in a footnote —
+     * "declares", "possibly", "faint signs" — and the reasons are listed so the
+     * judgement can be checked rather than taken on trust.
      */
-    id: 'provenance-tool-named',
+    id: 'possible-ai-generated',
     severity: SEVERITY.NOTICE,
     evaluate(r) {
-      const matches = r.provenance?.toolMatches;
-      if (!matches?.length) return null;
+      const assessment = r.provenance?.assessment;
+      if (!assessment || assessment.flag === 'none') return null;
 
-      const byTool = new Map();
-      for (const m of matches) if (!byTool.has(m.tool)) byTool.set(m.tool, m);
-      const listed = [...byTool.values()];
-
+      const reasons = assessment.reasons.map((reason) => `• ${reason.text}`).join('\n');
       return {
-        id: 'provenance-tool-named',
-        title: listed.length === 1
-          ? `Metadata names ${listed[0].tool}`
-          : `Metadata names ${listed.length} tools of interest`,
-        detail: `${listed
-          .map((m) => `"${m.field}" contains "${truncate(m.value, 80)}", which names ${m.tool}, ${m.kind}`)
-          .join('; ')}. This is what the file says about itself. A tag like this can be `
-          + 'left by the tool, copied from another file, or typed in by hand, and it is '
-          + 'removed by ordinary work such as a re-encode or a bounce — so it is evidence '
-          + 'worth knowing, not proof of how the audio was made.',
+        id: 'possible-ai-generated',
+        title: assessment.headline,
+        detail: `What raised this:\n${reasons}\n\n${assessment.limits.join(' ')}`,
+      };
+    },
+  },
+  {
+    /**
+     * AI-assisted processing is a different claim from AI generation, and
+     * gets its own note so the two are never conflated.
+     */
+    id: 'ai-assisted-processing',
+    severity: SEVERITY.INFO,
+    evaluate(r) {
+      const tools = r.provenance?.assessment?.processingTools;
+      if (!tools?.length) return null;
+      const byTool = new Map();
+      for (const t of tools) if (!byTool.has(t.tool)) byTool.set(t.tool, t);
+      const listed = [...byTool.values()];
+      return {
+        id: 'ai-assisted-processing',
+        title: `Metadata names ${listed.map((t) => t.tool).join(', ')}`,
+        detail: `${listed.map((t) => `${t.tool} is ${t.kind}`).join('; ')}. `
+          + 'Tools like these process existing audio rather than generating it, so this '
+          + 'says something was done to the recording, not that the recording was made by '
+          + 'a machine.',
       };
     },
   },

@@ -417,6 +417,38 @@ Partly — and the feature is shaped around what it CANNOT establish:
   there is nothing of note.
 - Against the user's real MP3: correctly reports Lavf/LAME and no tool match.
 
+### Follow-up: a flag with reasons, not just a list of fields
+The user pointed out that listing origin fields makes the reader do the
+inference, and asked for a plain "this is potentially AI" plus the reasons
+behind it. They were right, and it prompted a capability I had missed.
+
+- **C2PA manifests can DECLARE generative origin**, via the IPTC
+  `digitalSourceType` vocabulary (`trainedAlgorithmicMedia` and friends).
+  That is far stronger evidence than an encoder string, because it is what the
+  signer asserted. Now detected, along with `claim_generator`.
+- **A graded assessment** — `declared` / `possible` / `none`, with a confidence
+  level and a list of the reasons that produced it, each carrying its own
+  weight. A tool named in a dedicated encoder field outranks the same name in
+  free text, which might merely be discussing it.
+- **Generation and processing stay apart.** Demucs or LANDR raises a separate
+  note, never the AI-generated flag.
+- The empty case carries its own caveats as first-class content, so "nothing
+  found" can never be read as a clean result.
+
+### Bug found while testing the flag
+20. **The MP4 `uuid` branch never read the manifest's assertions.** It built
+    its result inline instead of going through `scanForC2pa`, so the strongest
+    signal path — a Content Credentials manifest declaring AI generation in an
+    M4A — discarded the very declaration it exists to find. Caught by a test
+    that built a real declaring manifest and expected `declared`, getting
+    `possible`.
+
+Also fixed: a COMM fixture that was not a valid ID3 comment frame, so the
+free-text phrase detection had not actually been exercised.
+
+**162 tests passing.** Verified in the browser across three cases: a manifest
+declaring generation, a Suno-tagged MP3, and an ordinary recording.
+
 ### Status — complete
 - [x] Byte layer, WAV/RIFF/RF64 parser, chunk decoders, report model, registry
 - [x] PCM scanner, QC engine + 23 rules

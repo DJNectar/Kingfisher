@@ -834,6 +834,25 @@ export function c2paManifestBytes({ extra = 512 } = {}) {
   return body;
 }
 
+/**
+ * A real ID3 COMM frame. Unlike a text frame, it carries an encoding byte, a
+ * three-character language code, a NUL-terminated description and then the
+ * comment itself — so it cannot be built with the text-frame helper.
+ */
+export function id3CommFrame(text, { language = 'eng', description = '' } = {}) {
+  const payload = concat(
+    new Uint8Array([3]), // UTF-8
+    enc.encode(language.padEnd(3).slice(0, 3)),
+    enc.encode(description),
+    new Uint8Array(1), // NUL terminating the description
+    enc.encode(text),
+  );
+  const h = new Uint8Array(10);
+  h.set(enc.encode('COMM'), 0);
+  new DataView(h.buffer).setUint32(4, payload.byteLength, false);
+  return concat(h, payload);
+}
+
 /** An ID3 GEOB frame carrying an embedded object. */
 export function id3GeobFrame(payload, { major = 3 } = {}) {
   const h = new Uint8Array(10);

@@ -475,10 +475,39 @@ function renderProvenance(report) {
 
   const lines = [section('ORIGIN AND PROVENANCE')];
 
+  // The headline first, with its reasons, so the section answers the question
+  // rather than leaving the reader to assemble the answer from fields.
+  const a = p.assessment;
+  if (a) {
+    lines.push(`  ${a.headline.toUpperCase()}`);
+    if (a.confidence) lines.push(row('Confidence', a.confidence, '  '));
+    if (a.reasons.length) {
+      lines.push('');
+      lines.push('  What raised this:');
+      for (const reason of a.reasons) {
+        for (const [i, l] of wrap(reason.text, 64).entries()) {
+          lines.push(`      ${i === 0 ? '• ' : '  '}${l}`);
+        }
+        if (reason.detail) for (const l of wrap(reason.detail, 62)) lines.push(`        ${l}`);
+      }
+    }
+    lines.push('');
+    for (const limit of a.limits) for (const l of wrap(limit, 68)) lines.push(`  ${l}`);
+    lines.push('');
+  }
+
   if (p.c2pa?.present) {
     lines.push(row('Content Credentials', `present, in ${p.c2pa.location}`));
     lines.push(row('Evidence', p.c2pa.evidence));
     lines.push(row('Manifest size', formatBytes(p.c2pa.bytes)));
+    if (p.c2pa.assertions?.digitalSourceTypes?.length) {
+      for (const t of p.c2pa.assertions.digitalSourceTypes) {
+        lines.push(row('Declares', t.label));
+      }
+    }
+    if (p.c2pa.assertions?.claimGenerator) {
+      lines.push(row('Produced by', p.c2pa.assertions.claimGenerator));
+    }
     lines.push(row('Signature checked', 'no — see the note below'));
     for (const l of wrap(p.c2pa.note, 66)) lines.push(`      ${l}`);
     lines.push('');
