@@ -77,10 +77,63 @@ rate, and fact-chunk duration for non-PCM.
 5. **Circular import** between `engine.js` and `rules.js` (`SEVERITY` uninitialised
    at load). Broken out into `severity.js`.
 
+### Implemented — store, persistence, exporters
+- `src/store/schema.js` — versioned file format, migration table, and a loader
+  that preserves unknown fields so an older build cannot strip data a newer one
+  wrote. A file from a future version is refused, not half-read.
+- `src/store/library.js` — pure CRUD (no DOM, no I/O) for clients, projects,
+  log entries and to-dos, plus rollup stats. Case-insensitive name-clash guards.
+- `src/store/idb.js` + `persistence.js` — Chrome File System Access with the
+  handle remembered in IndexedDB ("Reopen"), Safari download/upload fallback,
+  folder walking, clipboard. Deliberately no autosave (see the note in the file:
+  constant rewrites on a synced drive is how Dropbox makes conflicted copies).
+- `src/export/render.js` — the canonical text form; copy, .txt and the PDF all
+  render from it so they cannot drift apart.
+- `src/export/csv.js` — one row per file, blank (never 0) for unknowns.
+- `src/export/pdf.js` — **dependency-free PDF writer** (see below).
+
+### Decision: PDF without a library
+jsPDF (~350KB) would have to be vendored, since the app must work offline and a
+CDN tag is not an option. Our reports are monospaced text, and PDF's base-14
+fonts (Courier/Helvetica) are guaranteed present in every reader, so no font
+embedding is needed. That reduces the job to text operators + an exact xref
+table — ~300 lines, and exact rather than approximate. Cost, stated plainly:
+text/pagination/two fonts only; no images, rules, or non-Latin scripts
+(WinAnsi covers Latin-1; anything else is transliterated or shown as `?`, never
+silently dropped). If charts or a logo are ever needed, vendoring jsPDF becomes
+the right call. `.rtf` was rejected because it is not fixed-layout — a report
+sent to a client should look the same everywhere; `.txt` already covers "give
+me something editable".
+
+### Verified (how)
+- `node --test test/store.test.js` — **17/17**. Includes the required round
+  trip: a library with 2 projects, 3 log entries, to-dos (one completed) and a
+  silent-file observation is serialised, reopened, and asserted field by field —
+  including the bext description and timecode *inside* a stored report — then
+  confirmed still mutable. Also: a second save/reopen cycle is byte-identical
+  apart from `savedAt`; unknown future fields survive; a v99 file is refused.
+- `node --test test/export.test.js` — **18/18**. PDFs are checked by a
+  structural validator (`test/helpers/pdf-check.js`) that re-parses the xref and
+  asserts every byte offset lands exactly on its `N 0 obj`, /Size matches, and
+  each stream's declared /Length is truthful — the failure mode that makes a
+  hand-built PDF open blank. Also asserts the report text contains no
+  comparison language (`should be`, `expected`, `mismatch`, `target`, `wrong`).
+
+### Bugs the tests caught (all fixed)
+6. **CSV was corrupting every negative number.** The formula-injection guard
+   prefixed any cell starting with `-` with an apostrophe — including `-6.02`
+   dBFS, i.e. most levels in the app — turning the column into text and
+   breaking the sorting that is the whole reason to export CSV. Now exempts
+   plain numbers.
+7. Label column in the text report overran on `Full-scale samples:`.
+8. "1 of 6 channels **are** silent" → "is".
+9. (In the test helper, not the product) the PDF validator decoded WinAnsi
+   bytes as raw code points, so an em dash read back as a control character.
+
 ### Status
 - [x] Byte layer, WAV/RIFF/RF64 parser, chunk decoders, report model, registry
 - [x] PCM scanner, QC engine + 23 rules
-- [ ] Library store + persistence
-- [ ] Exporters (txt/csv/pdf)
+- [x] Library store, schema/migrations, persistence (Chrome + Safari paths)
+- [x] Exporters: text, CSV, dependency-free PDF
 - [ ] UI + help tab
-- [ ] Store/export tests, save-reopen round trip
+- [ ] End-to-end check in a real browser

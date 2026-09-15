@@ -283,10 +283,14 @@ export const RULES = [
       if (!silent.length) return null;
       return {
         id: 'channel-silence',
-        title: `${silent.length} of ${a.channels.length} channels are silent`,
+        title: `${silent.length} of ${a.channels.length} channel${
+          a.channels.length === 1 ? '' : 's'
+        } ${silent.length === 1 ? 'is' : 'are'} silent`,
         detail: `${silent
           .map((c) => `${c.name} (channel ${c.index + 1})`)
-          .join(', ')} contain only zero samples, while the others carry audio.`,
+          .join(', ')} ${
+          silent.length === 1 ? 'contains' : 'contain'
+        } only zero samples, while the others carry audio.`,
       };
     },
   },
