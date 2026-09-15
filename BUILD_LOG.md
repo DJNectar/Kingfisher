@@ -240,6 +240,85 @@ fragile of the two. Full run, all passing:
     so the byte-rate consistency rule fired correctly and the test blamed it.
     Fixture fixed; the rule was right.
 
+---
+
+## Session 2 — 2026-09-15 (formats)
+
+Request: read m4a, mp3 "and any other common audio files".
+
+### Implemented — six new formats
+The registry design held: each format is a new module plus one
+`registerParser()` call. **No changes were needed to the QC rules, the library
+store, or the exporters' structure** to accommodate them.
+
+| Format | Module | Levels |
+|---|---|---|
+| AIFF / AIFF-C | `parsers/aiff.js` | measured (PCM) |
+| MP4 / M4A (AAC, ALAC) | `parsers/mp4.js` | not measured |
+| MP3 | `parsers/mp3.js` | not measured |
+| FLAC | `parsers/flac.js` | not measured |
+| CAF | `parsers/caf.js` | measured (LPCM) |
+| Ogg (Vorbis/Opus/FLAC) | `parsers/ogg.js` | not measured |
+
+Shared: `parsers/id3.js` (ID3v2 synchsafe sizes, v2.2/2.3/2.4 frame layouts,
+four text encodings, unsynchronisation; plus ID3v1), used by MP3, AIFF and FLAC.
+
+### Notable decisions
+- **Bit depth is `null` for lossy formats.** MP3/AAC/Opus/Vorbis have none; the
+  MP4 sample entry says "16" regardless and repeating that would be a
+  fabricated fact. The UI swaps the bit-depth tile for a bitrate tile and
+  explains the blank in the text report.
+- **Bitrate is calculated from the audio data**, with any declared figure
+  reported separately and a warning only when the two disagree by more than 2×.
+- **MP3 duration counts frames.** The usual size÷bitrate shortcut is wrong for
+  VBR; counting frames is exact even with no Xing header. Verified exact for
+  both CBR and VBR fixtures.
+- **AAC gapless data** (iTunSMPB) gives the true audio length beside the
+  container's padded one.
+- **Opus pre-skip** is subtracted, and its fixed 48 kHz decode rate explained
+  rather than reported as the input rate.
+- **Two-pass identification.** Pass one is magic numbers; a new optional
+  `deepSniff(source)` runs only when nothing claimed the file, for formats with
+  no magic number (MP3) or one hidden behind a tag (FLAC).
+- **The audio extension filter is now derived from the registry**, so adding a
+  format cannot leave folder scanning silently skipping it.
+
+### Verified (how)
+- `npm test` — **130 tests, all passing** (up from 80). New suites: `aiff` (13),
+  `mp3` (15), `flac` (11), `caf-ogg` (11).
+- **Against a real file supplied by the user**: an iTunes-encoded M4A,
+  2,776,738 bytes. Reported 2:58.097, 44.1 kHz, stereo, AAC LC, 123 kbps
+  calculated against 128 declared. Its gapless data (priming 2,112 + 7,850,976
+  samples + padding 992) sums to exactly the container's 7,854,080 — an
+  independent confirmation the parsing is right.
+- **In the browser**: the real M4A through the real UI, plus a mixed batch of
+  10 files across formats. No page errors.
+
+### Bugs found and fixed
+16. **Every tagged MP3 was being parsed as FLAC.** `flacParser.sniff()` returned
+    true for any file starting with an ID3 tag — which is most MP3s in
+    existence — and FLAC is registered first. Caught by an ID3v1 test that had
+    passed before the FLAC parser existed. Pass-one sniffing is now strictly
+    magic-number-only, with tag-skipping moved to `deepSniff`. Regression test
+    added covering both directions.
+17. **MP3s with leading junk were unrecognised.** `sniff()` only sees the first
+    32 bytes, so a file with an APE tag or stray bytes before the first frame
+    was reported unreadable. Hence the deep-sniff pass.
+18. 8-bit signedness was inferred from byte order — true by coincidence for WAV
+    and AIFF, wrong for little-endian CAF. Now tracked separately.
+19. `KSDATAFORMAT_SUFFIX`-style near miss avoided in AIFF: the stale `bitDepth`
+    in COMM is ignored in favour of the `fl32`/`fl64` compression type, which
+    some writers leave inconsistent.
+
+### Still not done, deliberately
+- **Levels for compressed formats.** Measuring an MP3's peak means decoding it.
+  The browser could do this via `decodeAudioData`, and it would catch real
+  problems (lossy codecs can clip on decode). Not done here: it loads the whole
+  decoded file into memory and changes the app's "no decoding" character, so it
+  is the user's call. The LAME tag's encoded peak IS reported where present,
+  since that is a measurement already in the file.
+- **WMA, WavPack, Monkey's Audio, DSD.** Not common on a Mac music/post desk.
+
 ### Status — complete
 - [x] Byte layer, WAV/RIFF/RF64 parser, chunk decoders, report model, registry
 - [x] PCM scanner, QC engine + 23 rules

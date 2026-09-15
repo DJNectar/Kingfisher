@@ -37,6 +37,7 @@ export const DIRECTORY_PICKER_AVAILABLE = typeof window !== 'undefined'
 const HANDLE_KEY = 'library-handle';
 
 import { idbGet, idbSet, idbDelete } from './idb.js';
+import { listParsers } from '../core/registry.js';
 import { serializeLibrary, parseLibrary, LIBRARY_FILE_EXTENSION } from './schema.js';
 
 /** What this browser can actually do, for the UI to display honestly. */
@@ -190,9 +191,7 @@ export async function pickAudioFiles() {
         types: [
           {
             description: 'Audio files',
-            accept: {
-              'audio/*': ['.wav', '.wave', '.bwf', '.rf64', '.aif', '.aiff', '.flac', '.mp3'],
-            },
+            accept: { 'audio/*': AUDIO_EXTENSIONS },
           },
         ],
       });
@@ -205,7 +204,7 @@ export async function pickAudioFiles() {
     );
   }
 
-  const files = await pickFilesWithInput('.wav,.wave,.bwf,.rf64,.aif,.aiff,.flac,.mp3,audio/*');
+  const files = await pickFilesWithInput(`${AUDIO_EXTENSIONS.join(',')},audio/*`);
   return files.map((f) => ({ file: f, path: f.name }));
 }
 
@@ -249,11 +248,19 @@ async function walkDirectory(dir, prefix, out, recursive, onProgress) {
   }
 }
 
-/** Extensions we will attempt. Anything else is skipped during a folder scan. */
-export const AUDIO_EXTENSIONS = ['.wav', '.wave', '.bwf', '.rf64', '.w64'];
+/**
+ * Extensions offered in file pickers and accepted during a folder scan.
+ *
+ * Derived from the registered parsers rather than written out again here, so
+ * adding a format cannot leave folder scanning silently skipping it.
+ *
+ * Note this is only a filter for bulk input — identification is still by magic
+ * number, so a mislabelled file is read correctly once it gets through.
+ */
+export const AUDIO_EXTENSIONS = [...new Set(listParsers().flatMap((p) => p.extensions))];
 
 export function looksLikeAudio(name) {
-  const lower = name.toLowerCase();
+  const lower = String(name).toLowerCase();
   return AUDIO_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 

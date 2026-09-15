@@ -38,21 +38,34 @@ machine only and publishes nothing.
 
 ## What it reads
 
-WAV in all the shapes that matter in production:
+| Format | Notes | Levels measured |
+|---|---|---|
+| **WAV** | PCM 8/16/24/32-bit, IEEE float 32/64-bit, `WAVE_FORMAT_EXTENSIBLE`, RF64/BW64 for files over 4GB | yes |
+| **AIFF / AIFF-C** | Big-endian PCM, float, and the little-endian `sowt` variant most Mac software writes | yes |
+| **CAF** | Apple's Core Audio Format, big- or little-endian, 64-bit sizes | yes (LPCM) |
+| **FLAC** | Exact sample count and audio MD5 from STREAMINFO | no — would need decoding |
+| **M4A / MP4** | AAC (with profile and gapless data) and ALAC | no — would need decoding |
+| **MP3** | Every MPEG version and layer; exact frame-counted duration | no — would need decoding |
+| **Ogg** | Vorbis, Opus (pre-skip handled) and FLAC-in-Ogg | no — would need decoding |
 
-- PCM integer (8/16/24/32-bit) and IEEE float (32/64-bit)
-- `WAVE_FORMAT_EXTENSIBLE`, including channel masks and valid-bits
-- RF64 and BW64 for files over 4GB, honouring the `ds64` size table
-- BWF `bext` (description, originator, origination date/time, 64-bit timecode,
-  UMID, loudness, coding history), `iXML`, `LIST`/`INFO`, `cue`/`adtl`, `smpl`,
-  `acid`, `chna`, `axml`, `_PMX`
+Metadata read: BWF `bext` (description, originator, date/time, 64-bit timecode,
+UMID, loudness, coding history), `iXML`, `LIST`/`INFO`, `cue`/`adtl`, `smpl`,
+`acid`, `chna`, `axml`, `_PMX`, AIFF `NAME`/`AUTH`/`ANNO`/`MARK`/`INST`/`COMT`,
+ID3v2 and ID3v1, iTunes/MP4 atoms including free-form, Vorbis comments, LAME
+tags, and embedded artwork (described, not extracted).
 
-Anything it cannot read is reported as unreadable. It will not show you a
-plausible-looking wrong number.
+**Identification is by magic number, not file extension.** A file renamed to
+`.wav` that is really an MP3 is read correctly and reported as what it is.
 
-AIFF, FLAC and MP3 are not implemented. The parser dispatches on magic number
-through a registry (`src/core/registry.js`), so adding one is a new module plus
-a `registerParser()` call — no changes to the UI, rules or exporters.
+Some deliberate absences:
+
+- **Bit depth is blank for lossy formats**, because they have none. Showing the
+  container's stock "16" would be a fabricated fact.
+- **Levels are not measured for compressed formats**, because that means
+  decoding the audio, which this app does not do. The report says so.
+
+Adding a format is a new module in `src/core/parsers/` plus a
+`registerParser()` call — no changes to the UI, rules or exporters.
 
 ## Exports
 

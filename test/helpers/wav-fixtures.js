@@ -462,3 +462,353 @@ function latin1Bytes(s) {
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// MP3 builders. Real frame headers with silent (zero-filled) frame bodies —
+// enough for a parser to read, without needing an encoder.
+// ---------------------------------------------------------------------------
+
+const MP3_BITRATE_TABLE = {
+  '1-3': [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+  '1-1': [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
+  '2-3': [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+};
+const MP3_RATES = { 1: [44100, 48000, 32000], 2: [22050, 24000, 16000], 2.5: [11025, 12000, 8000] };
+
+/**
+ * One MPEG audio frame: a real 4-byte header followed by a zero-filled body of
+ * exactly the length the header implies.
+ */
+export function mp3Frame({
+  version = 1,
+  layer = 3,
+  bitrate = 128,
+  sampleRate = 44100,
+  channelMode = 0, // 0 stereo, 1 joint, 2 dual, 3 mono
+  padding = 0,
+  crc = false,
+  body = null,
+} = {}) {
+  const versionBits = version === 1 ? 3 : version === 2 ? 2 : 0;
+  const layerBits = 4 - layer;
+  const tableKey = `${version === 1 ? 1 : 2}-${layer}`;
+  const bitrateIndex = MP3_BITRATE_TABLE[tableKey].indexOf(bitrate);
+  if (bitrateIndex <= 0) throw new Error(`no bitrate index for ${bitrate} kbps at ${tableKey}`);
+  const rateIndex = MP3_RATES[version].indexOf(sampleRate);
+  if (rateIndex < 0) throw new Error(`no sample rate index for ${sampleRate}`);
+
+  const samplesPerFrame = layer === 1 ? 384 : version === 1 ? 1152 : 576;
+  const frameLength = layer === 1
+    ? Math.floor(((12 * bitrate * 1000) / sampleRate + padding) * 4)
+    : Math.floor((samplesPerFrame / 8 * bitrate * 1000) / sampleRate) + padding;
+
+  const out = new Uint8Array(frameLength);
+  out[0] = 0xff;
+  out[1] = 0xe0 | (versionBits << 3) | (layerBits << 1) | (crc ? 0 : 1);
+  out[2] = (bitrateIndex << 4) | (rateIndex << 2) | (padding << 1);
+  out[3] = (channelMode << 6);
+  if (body) out.set(body.subarray(0, Math.max(0, frameLength - 4)), 4);
+  return out;
+}
+
+/**
+ * A Xing or Info header, written into the body of the first frame. `frames` is
+ * what makes a VBR file's duration exact.
+ */
+export function xingFrame({
+  tag = 'Xing',
+  frames = 1000,
+  bytes = 100000,
+  sampleRate = 44100,
+  bitrate = 128,
+  channelMode = 0,
+  version = 1,
+  lame = null,
+} = {}) {
+  const channels = channelMode === 3 ? 1 : 2;
+  const sideInfoSize = version === 1 ? (channels === 1 ? 17 : 32) : (channels === 1 ? 9 : 17);
+  const tagOffset = sideInfoSize; // relative to the start of the frame BODY
+
+  const body = new Uint8Array(1024);
+  const dv = new DataView(body.buffer);
+  body.set(enc.encode(tag), tagOffset);
+  dv.setUint32(tagOffset + 4, 0x03, false); // flags: frames + bytes present
+  dv.setUint32(tagOffset + 8, frames, false);
+  dv.setUint32(tagOffset + 12, bytes, false);
+
+  if (lame) {
+    const lamePos = tagOffset + 16;
+    body.set(enc.encode(lame.encoder.padEnd(9).slice(0, 9)), lamePos);
+    body[lamePos + 9] = lame.vbrMethod ?? 0;
+    body[lamePos + 10] = Math.round((lame.lowpassHz ?? 0) / 100);
+    // Peak amplitude as 9.23 fixed point.
+    dv.setUint32(lamePos + 11, Math.round((lame.peakAmplitude ?? 0) * 8388608), false);
+    const delayPad = ((lame.encoderDelay ?? 0) << 12) | (lame.padding ?? 0);
+    body[lamePos + 21] = (delayPad >> 16) & 0xff;
+    body[lamePos + 22] = (delayPad >> 8) & 0xff;
+    body[lamePos + 23] = delayPad & 0xff;
+    body[lamePos + 20] = lame.bitrate ?? 0;
+  }
+
+  return mp3Frame({ version, bitrate, sampleRate, channelMode, body });
+}
+
+/** A whole MP3: optional ID3v2, frames, optional ID3v1. */
+export function mp3File({ id3v2 = null, frames = [], id3v1 = null } = {}) {
+  const parts = [];
+  if (id3v2) parts.push(id3v2);
+  parts.push(...frames);
+  if (id3v1) parts.push(id3v1);
+  return concat(...parts);
+}
+
+/** A 128-byte ID3v1 tag. */
+export function id3v1Tag({ title = '', artist = '', album = '', year = '', comment = '', track = null, genre = 17 } = {}) {
+  const t = new Uint8Array(128);
+  t.set(enc.encode('TAG'), 0);
+  const put = (s, at, len) => t.set(enc.encode(s).subarray(0, len), at);
+  put(title, 3, 30);
+  put(artist, 33, 30);
+  put(album, 63, 30);
+  put(year, 93, 4);
+  put(comment, 97, track === null ? 30 : 28);
+  if (track !== null) { t[125] = 0; t[126] = track; }
+  t[127] = genre;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// FLAC builders.
+// ---------------------------------------------------------------------------
+
+/** A metadata block: 1 bit last-flag, 7 bits type, 24-bit big-endian length. */
+export function flacBlock(type, payload, { last = false } = {}) {
+  const body = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+  const head = new Uint8Array(4);
+  head[0] = (last ? 0x80 : 0) | (type & 0x7f);
+  head[1] = (body.byteLength >> 16) & 0xff;
+  head[2] = (body.byteLength >> 8) & 0xff;
+  head[3] = body.byteLength & 0xff;
+  return concat(head, body);
+}
+
+/** STREAMINFO, bit-packed. Written independently of the parser's decoder. */
+export function streamInfoBlock({
+  minBlockSize = 4096,
+  maxBlockSize = 4096,
+  minFrameSize = 1000,
+  maxFrameSize = 8000,
+  sampleRate = 44100,
+  channels = 2,
+  bitsPerSample = 16,
+  totalSamples = 44100,
+  md5 = 'aabbccddeeff00112233445566778899',
+} = {}) {
+  const b = new Uint8Array(34);
+  const dv = new DataView(b.buffer);
+  dv.setUint16(0, minBlockSize, false);
+  dv.setUint16(2, maxBlockSize, false);
+  b[4] = (minFrameSize >> 16) & 0xff; b[5] = (minFrameSize >> 8) & 0xff; b[6] = minFrameSize & 0xff;
+  b[7] = (maxFrameSize >> 16) & 0xff; b[8] = (maxFrameSize >> 8) & 0xff; b[9] = maxFrameSize & 0xff;
+
+  // 20 bits sample rate, 3 bits channels-1, 5 bits bits-1, 36 bits samples.
+  b[10] = (sampleRate >> 12) & 0xff;
+  b[11] = (sampleRate >> 4) & 0xff;
+  b[12] = ((sampleRate & 0x0f) << 4) | (((channels - 1) & 0x07) << 1) | (((bitsPerSample - 1) >> 4) & 0x01);
+  b[13] = (((bitsPerSample - 1) & 0x0f) << 4) | (Math.floor(totalSamples / 2 ** 32) & 0x0f);
+  dv.setUint32(14, totalSamples >>> 0, false);
+
+  if (md5) {
+    for (let i = 0; i < 16; i++) b[18 + i] = parseInt(md5.substr(i * 2, 2), 16) || 0;
+  }
+  return b;
+}
+
+/** VORBIS_COMMENT payload. Little-endian lengths, unlike the rest of FLAC. */
+export function vorbisCommentBlock({ vendor = 'reference libFLAC 1.4.3', tags = {} } = {}) {
+  const entries = [];
+  for (const [key, value] of Object.entries(tags)) {
+    for (const v of [].concat(value)) entries.push(enc.encode(`${key}=${v}`));
+  }
+  let size = 4 + enc.encode(vendor).length + 4;
+  for (const e of entries) size += 4 + e.length;
+
+  const b = new Uint8Array(size);
+  const dv = new DataView(b.buffer);
+  let pos = 0;
+  const vendorBytes = enc.encode(vendor);
+  dv.setUint32(pos, vendorBytes.length, true); pos += 4;
+  b.set(vendorBytes, pos); pos += vendorBytes.length;
+  dv.setUint32(pos, entries.length, true); pos += 4;
+  for (const e of entries) {
+    dv.setUint32(pos, e.length, true); pos += 4;
+    b.set(e, pos); pos += e.length;
+  }
+  return b;
+}
+
+/** PICTURE payload, describing artwork without real image data. */
+export function flacPictureBlock({
+  type = 3, mimeType = 'image/jpeg', description = 'Front cover',
+  width = 1400, height = 1400, colourDepth = 24, dataLength = 100000,
+} = {}) {
+  const mime = enc.encode(mimeType);
+  const desc = enc.encode(description);
+  const b = new Uint8Array(32 + mime.length + desc.length + dataLength);
+  const dv = new DataView(b.buffer);
+  let pos = 0;
+  dv.setUint32(pos, type, false); pos += 4;
+  dv.setUint32(pos, mime.length, false); pos += 4;
+  b.set(mime, pos); pos += mime.length;
+  dv.setUint32(pos, desc.length, false); pos += 4;
+  b.set(desc, pos); pos += desc.length;
+  dv.setUint32(pos, width, false); pos += 4;
+  dv.setUint32(pos, height, false); pos += 4;
+  dv.setUint32(pos, colourDepth, false); pos += 4;
+  dv.setUint32(pos, 0, false); pos += 4;
+  dv.setUint32(pos, dataLength, false);
+  return b;
+}
+
+/** A whole FLAC file: marker, metadata blocks, then stand-in audio bytes. */
+export function flacFile({ blocks = [], audioBytes = 10000, prefix = null } = {}) {
+  const parts = [];
+  if (prefix) parts.push(prefix);
+  parts.push(enc.encode('fLaC'));
+  parts.push(...blocks);
+  parts.push(new Uint8Array(audioBytes));
+  return concat(...parts);
+}
+
+// ---------------------------------------------------------------------------
+// CAF and Ogg builders.
+// ---------------------------------------------------------------------------
+
+/** CAF chunk: 4-char type + signed 64-bit big-endian size + payload. */
+export function cafChunk(type, payload, { sizeOverride = null } = {}) {
+  const body = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+  const out = new Uint8Array(12 + body.byteLength);
+  const dv = new DataView(out.buffer);
+  out.set(enc.encode(type.padEnd(4)).subarray(0, 4), 0);
+  dv.setBigInt64(4, BigInt(sizeOverride === null ? body.byteLength : sizeOverride));
+  out.set(body, 12);
+  return out;
+}
+
+/** CAF 'desc': the sample rate is a 64-bit float. */
+export function cafDesc({
+  sampleRate = 48000,
+  formatId = 'lpcm',
+  formatFlags = 0,
+  bytesPerPacket = 6,
+  framesPerPacket = 1,
+  channelsPerFrame = 2,
+  bitsPerChannel = 24,
+} = {}) {
+  const b = new Uint8Array(32);
+  const dv = new DataView(b.buffer);
+  dv.setFloat64(0, sampleRate, false);
+  b.set(enc.encode(formatId.padEnd(4)).subarray(0, 4), 8);
+  dv.setUint32(12, formatFlags, false);
+  dv.setUint32(16, bytesPerPacket, false);
+  dv.setUint32(20, framesPerPacket, false);
+  dv.setUint32(24, channelsPerFrame, false);
+  dv.setUint32(28, bitsPerChannel, false);
+  return b;
+}
+
+/** CAF 'data' chunk: a 4-byte edit count precedes the samples. */
+export function cafData(samples, { openEnded = false } = {}) {
+  const body = concat(new Uint8Array(4), samples);
+  return cafChunk('data', body, { sizeOverride: openEnded ? -1 : null });
+}
+
+export function cafFile(chunks, { version = 1, flags = 0 } = {}) {
+  const head = new Uint8Array(8);
+  head.set(enc.encode('caff'), 0);
+  const dv = new DataView(head.buffer);
+  dv.setUint16(4, version, false);
+  dv.setUint16(6, flags, false);
+  return concat(head, ...chunks);
+}
+
+/** CAF 'info' chunk: NUL-terminated key/value pairs. */
+export function cafInfo(tags) {
+  const parts = [];
+  const count = new Uint8Array(4);
+  new DataView(count.buffer).setUint32(0, Object.keys(tags).length, false);
+  parts.push(count);
+  for (const [k, v] of Object.entries(tags)) {
+    parts.push(enc.encode(k), new Uint8Array(1), enc.encode(String(v)), new Uint8Array(1));
+  }
+  return cafChunk('info', concat(...parts));
+}
+
+/** One Ogg page. `granule` is the running sample count. */
+export function oggPage({
+  granule = 0,
+  serial = 1,
+  sequence = 0,
+  headerType = 0,
+  payload = new Uint8Array(0),
+} = {}) {
+  // Segment table: 255-byte runs, then the remainder.
+  const segments = [];
+  let remaining = payload.byteLength;
+  while (remaining >= 255) { segments.push(255); remaining -= 255; }
+  segments.push(remaining);
+
+  const out = new Uint8Array(27 + segments.length + payload.byteLength);
+  const dv = new DataView(out.buffer);
+  out.set(enc.encode('OggS'), 0);
+  out[4] = 0; // version
+  out[5] = headerType;
+  dv.setBigInt64(6, BigInt(granule), true);
+  dv.setUint32(14, serial, true);
+  dv.setUint32(18, sequence, true);
+  dv.setUint32(22, 0, true); // checksum, not verified by this app
+  out[26] = segments.length;
+  out.set(segments, 27);
+  out.set(payload, 27 + segments.length);
+  return out;
+}
+
+/** OpusHead identification payload. */
+export function opusHead({ channels = 2, preSkip = 312, inputSampleRate = 48000, gain = 0 } = {}) {
+  const b = new Uint8Array(19);
+  const dv = new DataView(b.buffer);
+  b.set(enc.encode('OpusHead'), 0);
+  b[8] = 1; // version
+  b[9] = channels;
+  dv.setUint16(10, preSkip, true);
+  dv.setUint32(12, inputSampleRate, true);
+  dv.setInt16(16, Math.round(gain * 256), true);
+  b[18] = 0; // channel mapping family
+  return b;
+}
+
+/** Vorbis identification payload. */
+export function vorbisId({ channels = 2, sampleRate = 44100, nominalBitrate = 160000 } = {}) {
+  const b = new Uint8Array(30);
+  const dv = new DataView(b.buffer);
+  b[0] = 0x01;
+  b.set(enc.encode('vorbis'), 1);
+  dv.setUint32(7, 0, true); // version
+  b[11] = channels;
+  dv.setUint32(12, sampleRate, true);
+  dv.setInt32(16, 0, true); // max
+  dv.setInt32(20, nominalBitrate, true);
+  dv.setInt32(24, 0, true); // min
+  b[28] = 0xb8;
+  b[29] = 0x01;
+  return b;
+}
+
+/** OpusTags / Vorbis comment payload for an Ogg stream. */
+export function opusTags(tags) {
+  return concat(enc.encode('OpusTags'), vorbisCommentBlock({ vendor: 'libopus 1.4', tags }));
+}
+
+export function vorbisComments(tags) {
+  return concat(new Uint8Array([0x03]), enc.encode('vorbis'), vorbisCommentBlock({ vendor: 'libVorbis', tags }));
+}

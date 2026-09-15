@@ -132,17 +132,35 @@ function parseBanner(report) {
 
 function factStrip(report) {
   const f = report.format;
+  const lossy = f.codecFamily === 'compressed' && f.lossless === false;
+
   const facts = [
     ['Sample rate', f.sampleRate ? `${Number((f.sampleRate / 1000).toFixed(3))} kHz` : null, f.sampleRate ? `${f.sampleRate.toLocaleString('en-US')} Hz` : null],
-    ['Bit depth', f.bitDepth ? `${f.bitDepth}-bit` : null, f.codecFamily === 'pcm-float' ? 'float' : f.codecFamily === 'pcm-int' ? 'integer' : null],
+  ];
+
+  // For a lossy format there is no bit depth, and the bitrate is the number
+  // that matters instead. Showing a dash where a lossy file has no bit depth
+  // reads like missing data, so the tile is swapped rather than left empty.
+  if (lossy && f.bitrate) {
+    facts.push(['Bitrate', `${Math.round(f.bitrate / 1000)}`, 'kbps' + (f.bitrateMode === 'variable' ? ', VBR' : f.bitrateMode === 'constant' ? ', CBR' : '')]);
+  } else {
+    facts.push(['Bit depth', f.bitDepth ? `${f.bitDepth}-bit` : null,
+      f.codecFamily === 'pcm-float' ? 'float' : f.codecFamily === 'pcm-int' ? 'integer' : lossy ? 'not applicable' : null]);
+  }
+
+  facts.push(
     ['Channels', f.channels ? String(f.channels) : null, f.layoutName ?? (f.channels === 2 ? 'stereo' : f.channels === 1 ? 'mono' : null)],
     ['Duration', report.duration.seconds !== null ? formatDuration(report.duration.seconds) : null,
       report.duration.frames ? `${report.duration.frames.toLocaleString('en-US')} frames` : null],
-    ['Format', f.codec, report.container.kind],
+    ['Format', f.codec, f.lossless === true && f.codecFamily === 'compressed' ? 'lossless' : report.container.kind],
     ['File size', formatBytesShort(report.file.size), null],
-    ['Peak', report.audio?.measured ? formatDbfs(report.audio.peakDbfs, 1).replace(' dBFS', '') : null,
-      report.audio?.measured ? 'dBFS' : null],
-  ];
+  );
+
+  if (report.audio?.measured) {
+    facts.push(['Peak', formatDbfs(report.audio.peakDbfs, 1).replace(' dBFS', ''), 'dBFS']);
+  } else if (!lossy || !f.bitrate) {
+    facts.push(['Peak', null, 'not measured']);
+  }
 
   return el(
     'div',
@@ -213,7 +231,192 @@ function levelsSection(report, collapsed) {
 
 function metadataSections(report, collapsed) {
   const m = report.metadata;
+  const f = report.format;
   const out = [];
+
+  // A "technical details" section carrying the fields that do not fit the
+  // headline tiles, so nothing the parser established is hidden.
+  const technical = [
+    ['Container', report.container.kind],
+    ['Codec', f.codec],
+    ['Profile', f.profile],
+    ['Lossless', f.lossless === null ? null : f.lossless ? 'yes' : 'no'],
+    ['Bitrate', f.bitrate ? `${Math.round(f.bitrate / 1000)} kbps (calculated from the audio data)` : null],
+    ['Bitrate mode', f.bitrateMode],
+    ['Encoder', f.encoder],
+    ['Block align', f.blockAlign ? `${f.blockAlign} bytes` : null],
+    ['Byte rate', f.byteRate ? `${f.byteRate.toLocaleString('en-US')} bytes/s` : null],
+    ['Byte order', f.sampleEndianness === 'big' ? 'big-endian' : f.sampleEndianness === 'little' ? 'little-endian' : null],
+    ['Duration source', report.duration.source],
+  ].filter(([, v]) => v !== null && v !== undefined);
+
+  if (technical.length) out.push(section('Technical details', kv(technical), { open: false }));
+
+  if (m.id3v2) {
+    const entries = Object.entries(m.id3v2.frames);
+    out.push(section(
+      `ID3 tag (version ${m.id3v2.version})`,
+      entries.length
+        ? table(['Frame', 'Field', 'Value'], entries.map(([id, fr]) => [id, fr.name, fr.value]))
+        : el('p', { class: 'muted', style: 'margin:0', text: 'Present, but no readable fields were found.' }),
+      { open: !collapsed, count: `(${entries.length})` },
+    ));
+  }
+
+  if (m.id3v1) {
+    out.push(section('ID3v1 tag', kv([
+      ['Title', m.id3v1.title || null],
+      ['Artist', m.id3v1.artist || null],
+      ['Album', m.id3v1.album || null],
+      ['Year', m.id3v1.year || null],
+      ['Comment', m.id3v1.comment || null],
+      ['Track', m.id3v1.track !== null ? String(m.id3v1.track) : null],
+      ['Genre', m.id3v1.genre],
+    ]), { open: false }));
+  }
+
+  if (m.itunes) {
+    const entries = Object.entries(m.itunes).filter(([id]) => id !== 'iTunSMPB');
+    out.push(section(
+      'iTunes / MP4 metadata',
+      entries.length
+        ? table(['Atom', 'Field', 'Value'], entries.map(([id, t]) => [t.freeForm ? '----' : id, t.name, t.value]))
+        : el('p', { class: 'muted', style: 'margin:0', text: 'No title, artist or album tags are present in this file.' }),
+      { open: !collapsed, count: `(${entries.length})` },
+    ));
+  }
+
+  if (m.vorbisComment) {
+    const entries = Object.entries(m.vorbisComment.tags);
+    out.push(section('Tags (Vorbis comments)', el('div', {}, [
+      m.vorbisComment.vendor ? el('p', { class: 'muted', text: `Written by ${m.vorbisComment.vendor}` }) : null,
+      table(['Field', 'Value'], entries.map(([k, v]) => [k, Array.isArray(v) ? v.join('; ') : v])),
+    ]), { open: !collapsed, count: `(${entries.length})` }));
+  }
+
+  if (m.codecConfig) {
+    out.push(section('Codec configuration', kv([
+      ['Object type', m.codecConfig.objectType],
+      ['Profile', m.codecConfig.profile],
+      ['Spectral band replication', m.codecConfig.sbr ? 'yes' : null],
+      ['Declared average bitrate', m.codecConfig.declaredAvgBitrate ? `${Math.round(m.codecConfig.declaredAvgBitrate / 1000)} kbps (as stated in the file)` : null],
+      ['Declared maximum bitrate', m.codecConfig.declaredMaxBitrate ? `${Math.round(m.codecConfig.declaredMaxBitrate / 1000)} kbps (as stated in the file)` : null],
+    ]), { open: false }));
+  }
+
+  if (m.gapless) {
+    out.push(section('Gapless playback information', el('div', {}, [
+      kv([
+        ['Encoder delay', `${m.gapless.priming.toLocaleString('en-US')} samples at the start`],
+        ['Padding', `${m.gapless.padding.toLocaleString('en-US')} samples at the end`],
+        ['True audio length', `${formatDuration(m.gapless.trueSeconds)} (${m.gapless.originalSampleCount.toLocaleString('en-US')} frames)`],
+      ]),
+      el('p', { class: 'muted', style: 'margin-top:8px', text: 'The duration above includes the silence the encoder adds; this is the real length.' }),
+    ]), { open: !collapsed }));
+  }
+
+  if (m.mpeg) {
+    out.push(section('MPEG audio', kv([
+      ['Version', m.mpeg.version],
+      ['Layer', m.mpeg.layer],
+      ['Channel mode', m.mpeg.channelMode],
+      ['Emphasis', m.mpeg.emphasis !== 'none' ? m.mpeg.emphasis : null],
+      ['CRC protected', m.mpeg.crcProtected ? 'yes' : 'no'],
+      ['Frames', m.mpeg.frameCount ? m.mpeg.frameCount.toLocaleString('en-US') : null],
+      ['VBR header', m.mpeg.vbrHeader],
+    ]), { open: false }));
+  }
+
+  if (m.lame) {
+    out.push(section('LAME encoder tag', kv([
+      ['Encoder', m.lame.encoder],
+      ['Peak as encoded', m.lame.peakDbfs !== null ? formatDbfs(m.lame.peakDbfs) : null],
+      ['Encoder delay', m.lame.encoderDelay !== null ? `${m.lame.encoderDelay} samples` : null],
+      ['Padding', m.lame.padding !== null ? `${m.lame.padding} samples` : null],
+      ['Lowpass', m.lame.lowpassHz ? `${(m.lame.lowpassHz / 1000).toFixed(1)} kHz` : null],
+      ['Nominal bitrate', m.lame.bitrate ? `${m.lame.bitrate} kbps` : null],
+    ]), { open: !collapsed }));
+  }
+
+  if (m.flac) {
+    out.push(section('FLAC stream details', kv([
+      ['Compression ratio', `${(m.flac.compressionRatio * 100).toFixed(1)}% of the uncompressed size`],
+      ['Uncompressed size', formatBytes(m.flac.uncompressedSize)],
+      ['Audio MD5', m.flac.md5, { mono: true }],
+      ['Block size', m.flac.fixedBlockSize ? `${m.flac.minBlockSize} (fixed)` : `${m.flac.minBlockSize}–${m.flac.maxBlockSize}`],
+    ]), { open: false }));
+  }
+
+  if (m.opus) {
+    out.push(section('Opus stream details', kv([
+      ['Pre-skip', `${m.opus.preSkip} samples`],
+      ['Original sample rate', m.opus.inputSampleRate ? formatSampleRate(m.opus.inputSampleRate) : null],
+      ['Output gain', `${m.opus.outputGainDb} dB`],
+    ]), { open: false }));
+  }
+
+  if (m.vorbis) {
+    out.push(section('Vorbis stream details', kv([
+      ['Nominal bitrate', `${Math.round(m.vorbis.nominalBitrate / 1000)} kbps`],
+      ['Maximum bitrate', m.vorbis.maximumBitrate ? `${Math.round(m.vorbis.maximumBitrate / 1000)} kbps` : null],
+      ['Minimum bitrate', m.vorbis.minimumBitrate ? `${Math.round(m.vorbis.minimumBitrate / 1000)} kbps` : null],
+    ]), { open: false }));
+  }
+
+  if (m.alac) {
+    out.push(section('Apple Lossless (ALAC)', kv([
+      ['Bit depth', `${m.alac.bitDepth}-bit`],
+      ['Sample rate', formatSampleRate(m.alac.sampleRate)],
+      ['Frame length', `${m.alac.frameLength.toLocaleString('en-US')} samples`],
+      ['Average bitrate', m.alac.avgBitrate ? `${Math.round(m.alac.avgBitrate / 1000)} kbps` : null],
+    ]), { open: false }));
+  }
+
+  if (m.iff) {
+    out.push(section('AIFF text chunks', kv(
+      Object.entries(m.iff).map(([k, v]) => [k.charAt(0).toUpperCase() + k.slice(1), v]),
+    ), { open: !collapsed }));
+  }
+
+  if (m.cafInfo) {
+    out.push(section('CAF metadata', kv(Object.entries(m.cafInfo)), { open: !collapsed }));
+  }
+
+  if (m.markers?.markers?.length) {
+    out.push(section('Markers', table(
+      [{ label: 'ID', class: 'num' }, { label: 'Position', class: 'num' }, { label: 'Time', class: 'num' }, 'Name'],
+      m.markers.markers.map((mk) => [
+        mk.id,
+        mk.position.toLocaleString('en-US'),
+        f.sampleRate ? formatDuration(mk.position / f.sampleRate) : UNKNOWN,
+        mk.name || '',
+      ]),
+    ), { count: `(${m.markers.markers.length})` }));
+  }
+
+  if (m.instrument) {
+    out.push(section('Instrument', kv([
+      ['Root note', `MIDI ${m.instrument.baseNote}`],
+      ['Detune', `${m.instrument.detuneCents} cents`],
+      ['Key range', `MIDI ${m.instrument.lowNote}–${m.instrument.highNote}`],
+      ['Gain', `${m.instrument.gainDb} dB`],
+    ]), { open: false }));
+  }
+
+  if (m.comments?.length) {
+    out.push(section('Comments', el('div', {}, m.comments.map((c) =>
+      el('p', { style: 'margin:0 0 6px', text: `${c.timestamp ? new Date(c.timestamp).toLocaleString() : 'undated'}: ${c.text}` }),
+    )), { open: false }));
+  }
+
+  if (m.pictures?.length) {
+    out.push(section('Embedded artwork', table(
+      ['Type', 'Format', { label: 'Size', class: 'num' }, { label: 'Data', class: 'num' }, 'Description'],
+      m.pictures.map((p) => [
+        p.typeName, p.mimeType, `${p.width}×${p.height}`, formatBytesShort(p.dataLength), p.description || '',
+      ]),
+    ), { count: `(${m.pictures.length})` }));
+  }
 
   if (m.bext) {
     const rows = [
@@ -325,10 +528,18 @@ function metadataSections(report, collapsed) {
   if (m.adm) out.push(section('ADM metadata (axml)', el('pre', { class: 'raw', text: m.adm.raw })));
   if (m.xmp) out.push(section('XMP metadata', el('pre', { class: 'raw', text: m.xmp.raw })));
 
-  if (!out.length) {
+  // "Technical details" is always present, so metadata emptiness is judged on
+  // the metadata itself rather than on how many sections were built.
+  const hasMetadata = Object.entries(m).some(([key, value]) => {
+    if (value === null || value === undefined) return false;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+    return true;
+  });
+  if (!hasMetadata) {
     out.push(section(
       'Embedded metadata',
-      el('p', { class: 'muted', style: 'margin:0', text: 'None found. This file carries no bext, iXML or INFO metadata.' }),
+      el('p', { class: 'muted', style: 'margin:0', text: 'None found. This file carries no tags or descriptive metadata.' }),
       { open: false },
     ));
   }

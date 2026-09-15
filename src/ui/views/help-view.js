@@ -51,7 +51,32 @@ export function renderHelp(host) {
         'Measured levels: peak and RMS for the file and for each channel, where the loudest moment is, and whether any channel is silent.',
         'A full list of every chunk in the file, including the ones Kingfisher does not decode — so you can see that nothing is being hidden from you.',
       ]),
-      el('p', { class: 'muted', text: 'Right now Kingfisher reads WAV files (including BWF, RF64 and BW64). Other formats are planned; until then it will tell you plainly that it does not recognise a file rather than guessing at it.' }),
+      el('h4', { text: 'Which files it reads' }),
+      ul([
+        el('span', {}, [el('strong', { text: 'WAV' }), ' — including BWF, RF64 and BW64 for files over 4GB.']),
+        el('span', {}, [el('strong', { text: 'AIFF and AIFF-C' }), ' — the Mac standard, including the little-endian "sowt" variant most Mac software writes.']),
+        el('span', {}, [el('strong', { text: 'M4A and MP4' }), ' — AAC, and Apple Lossless (ALAC).']),
+        el('span', {}, [el('strong', { text: 'MP3' }), ' — every MPEG version and layer, with tags.']),
+        el('span', {}, [el('strong', { text: 'FLAC' }), ' — including the checksum that lets a file be verified.']),
+        el('span', {}, [el('strong', { text: 'CAF' }), " — Apple's Core Audio Format, which Logic writes for long recordings."]),
+        el('span', {}, [el('strong', { text: 'Ogg' }), ' — Vorbis, Opus and FLAC-in-Ogg.']),
+      ]),
+      el('p', { class: 'muted', text: 'Kingfisher identifies a file by looking inside it, not by its name. A file someone renamed to .wav that is really an MP3 is read correctly, and the report tells you what it actually is. Anything it does not recognise is reported as unreadable rather than guessed at.' }),
+
+      el('h4', { text: 'Compressed files: what you get and what you do not' }),
+      el('p', { text: 'For MP3, AAC, Opus and Vorbis, Kingfisher reports everything the file states about itself — sample rate, channels, duration, bitrate, the codec and its settings, and all the tags. What it does not report is measured levels, because finding the peak of a compressed file means decoding the audio, which this app deliberately does not do. The report says "not measured" rather than leaving a gap.' }),
+      el('div', { class: 'callout' }, [
+        el('strong', { text: 'Bit depth is blank for MP3, AAC, Opus and Vorbis, and that is correct. ' }),
+        'Those formats do not store audio as samples of a fixed width, so they have no bit depth at all. Tools that show "16-bit" for an MP3 are repeating a number from the container that means nothing. FLAC and ALAC are compressed but lossless, so they do have a real bit depth and it is shown.',
+      ]),
+      el('p', {}, [
+        el('strong', { text: 'MP3 length. ' }),
+        'Most tools work out an MP3\'s duration by dividing its size by its bitrate, which is only right for a constant-bitrate file and can be badly wrong for a variable one. Kingfisher counts the actual frames, so the length is exact even for a VBR file with no Xing header — the case that usually goes wrong.',
+      ]),
+      el('p', {}, [
+        el('strong', { text: 'AAC length. ' }),
+        'An AAC encoder adds a little silence at the start and end for technical reasons. Where the file records how much (most iTunes-encoded files do), Kingfisher shows both the container length and the true audio length underneath it.',
+      ]),
 
       // ------------------------------------------------------------------
       h3('checking', 'Checking a file or folder'),

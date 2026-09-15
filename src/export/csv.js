@@ -42,6 +42,25 @@ const COLUMNS = [
   ['iXML take', (r) => r.metadata.ixml?.fields?.TAKE],
   ['INFO title', (r) => r.metadata.info?.INAM?.value],
   ['INFO artist', (r) => r.metadata.info?.IART?.value],
+  // Appended after the original set, per the stable-columns rule at the top of
+  // this file: a spreadsheet built against an earlier export keeps working.
+  ['Lossless', (r) => (r.format.lossless === null ? null : yesNo(r.format.lossless))],
+  ['Bitrate (kbps)', (r) => (r.format.bitrate ? Math.round(r.format.bitrate / 1000) : null)],
+  ['Bitrate mode', (r) => r.format.bitrateMode],
+  ['Profile', (r) => r.format.profile],
+  ['Encoder', (r) => r.format.encoder],
+  ['Byte order', (r) => r.format.sampleEndianness],
+  ['Duration source', (r) => r.duration.source],
+  // Tags, from whichever scheme the file happens to use.
+  ['Title', (r) => anyTag(r, ['TIT2', 'TT2'], ['©nam'], ['TITLE'], (m) => m.iff?.name ?? m.id3v1?.title)],
+  ['Artist', (r) => anyTag(r, ['TPE1', 'TP1'], ['©ART'], ['ARTIST'], (m) => m.iff?.author ?? m.id3v1?.artist)],
+  ['Album', (r) => anyTag(r, ['TALB', 'TAL'], ['©alb'], ['ALBUM'], (m) => m.id3v1?.album)],
+  ['Track', (r) => anyTag(r, ['TRCK', 'TRK'], ['trkn'], ['TRACKNUMBER'], (m) => m.id3v1?.track)],
+  ['ISRC', (r) => anyTag(r, ['TSRC'], [], ['ISRC'], () => null)],
+  ['Gapless true length (s)', (r) => round(r.metadata.gapless?.trueSeconds, 6)],
+  ['Encoded peak (dBFS)', (r) => dbfs(r.metadata.lame?.peakDbfs)],
+  ['Audio MD5', (r) => r.metadata.flac?.md5],
+
   ['Observations', (r) => r.observations.length],
   ['Needs a look', (r) => r.observations.filter((o) => o.severity === 'attention').map((o) => o.title).join(' | ')],
   ['Worth noting', (r) => r.observations.filter((o) => o.severity === 'notice').map((o) => o.title).join(' | ')],
@@ -112,6 +131,29 @@ function clock(seconds) {
 
 function yesNo(v) {
   return v ? 'yes' : 'no';
+}
+
+/**
+ * The same piece of information lives in a different place in each format, so
+ * look in all of them: ID3 frames, iTunes atoms, Vorbis comments, and finally
+ * whatever the format's own scheme is.
+ */
+function anyTag(report, id3Keys, itunesKeys, vorbisKeys, fallback) {
+  const m = report.metadata;
+  for (const key of id3Keys) {
+    const v = m.id3v2?.frames?.[key]?.value;
+    if (v) return v;
+  }
+  for (const key of itunesKeys) {
+    const v = m.itunes?.[key]?.value;
+    if (v) return v;
+  }
+  for (const key of vorbisKeys) {
+    const v = m.vorbisComment?.tags?.[key];
+    if (v) return Array.isArray(v) ? v.join('; ') : v;
+  }
+  const extra = fallback?.(m);
+  return extra === undefined || extra === '' ? null : extra;
 }
 
 export function toCsv(rows) {
