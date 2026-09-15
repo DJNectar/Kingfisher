@@ -364,6 +364,9 @@ function applyFormat(report) {
   f.byteRate = fmt.byteRate;
   f.extensible = fmt.extensible;
   f.channelMask = fmt.channelMask;
+  f.lossless = f.codecFamily === 'pcm-int' || f.codecFamily === 'pcm-float';
+  f.sampleEndianness = 'little'; // RIFF is little-endian by definition
+  f.unsigned8Bit = true; // 8-bit WAV is unsigned, unlike AIFF and CAF
 
   const layout = describeChannelLayout(fmt);
   if (layout) {

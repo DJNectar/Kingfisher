@@ -11,11 +11,13 @@
  */
 
 import { wavParser } from './parsers/wav.js';
+import { aiffParser } from './parsers/aiff.js';
+import { mp4Parser } from './parsers/mp4.js';
 import { scanAudio } from './audio/pcm.js';
 import { runRules } from './qc/engine.js';
 import { createReport, addError, finalizeStatus } from './report.js';
 
-const parsers = [wavParser];
+const parsers = [wavParser, aiffParser, mp4Parser];
 
 export function registerParser(parser) {
   if (!parser?.id || typeof parser.parse !== 'function' || typeof parser.sniff !== 'function') {

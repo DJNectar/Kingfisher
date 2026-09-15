@@ -62,6 +62,20 @@ export function createReport(file = {}) {
       layoutSource: null, // "channel mask" | "assumed from channel count"
       layoutMaskChannelCount: null, // speakers named by the mask, for cross-check
       layoutHasUndefinedBits: false, // mask sets bits with no defined speaker
+
+      /**
+       * Fields that only apply to some formats. Each stays null where the
+       * concept does not exist, which is itself information: bit depth is
+       * meaningless for MP3, and bitrate is uninteresting for uncompressed
+       * WAV. The UI shows what applies and explains what does not.
+       */
+      lossless: null, // true | false | null when unknown
+      bitrate: null, // bits per second
+      bitrateMode: null, // 'constant' | 'variable' | null
+      profile: null, // e.g. "MPEG-1 Layer III", "AAC LC", "ALAC"
+      encoder: null, // e.g. "LAME3.100" — read from the file, never guessed
+      sampleEndianness: null, // 'little' | 'big' — for PCM in non-RIFF containers
+      unsigned8Bit: null, // 8-bit PCM: WAV is unsigned, AIFF/CAF are signed
     },
 
     duration: {
@@ -78,8 +92,13 @@ export function createReport(file = {}) {
       shortfall: null, // declared - available, when positive
     },
 
-    /** Everything embedded in the file. Absent chunks stay null. */
+    /**
+     * Everything embedded in the file. Absent entries stay null.
+     * Grouped by where it came from, because the same idea (a title, say) is
+     * carried differently by each format and it matters which one a file used.
+     */
     metadata: {
+      // RIFF / WAV
       bext: null,
       bextTimecode: null,
       ixml: null,
@@ -91,6 +110,25 @@ export function createReport(file = {}) {
       chna: null,
       xmp: null,
       adm: null,
+      // AIFF
+      iff: null, // NAME / AUTH / (c) / ANNO text chunks
+      markers: null,
+      instrument: null,
+      comments: null,
+      // MP3, AIFF, FLAC
+      id3v2: null,
+      id3v1: null,
+      // MP4 / M4A
+      itunes: null,
+      gapless: null, // encoder delay/padding, and the true sample count
+      codecConfig: null,
+      alac: null,
+      // FLAC / Ogg
+      vorbisComment: null,
+      pictures: null,
+      // MP3
+      mpeg: null,
+      lame: null,
     },
 
     /** Every chunk seen, decoded or not, so nothing in the file is invisible. */

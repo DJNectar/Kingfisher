@@ -242,3 +242,223 @@ export function factChunk(sampleLength) {
   new DataView(b.buffer).setUint32(0, sampleLength, true);
   return chunk('fact', b);
 }
+
+// ---------------------------------------------------------------------------
+// AIFF / AIFF-C builders. Big-endian throughout, which is the whole point.
+// ---------------------------------------------------------------------------
+
+/** Big-endian chunk: id + size + payload + pad byte when the size is odd. */
+export function beChunk(id, payload) {
+  const body = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+  const pad = body.byteLength % 2;
+  const out = new Uint8Array(8 + body.byteLength + pad);
+  out.set(enc.encode(id.padEnd(4)).subarray(0, 4), 0);
+  new DataView(out.buffer).setUint32(4, body.byteLength, false); // big-endian
+  out.set(body, 8);
+  return out;
+}
+
+/** Wrap chunks in a FORM/AIFF (or AIFC) container. */
+export function form(chunks, { formType = 'AIFF', sizeOverride = null } = {}) {
+  const body = concat(...chunks);
+  const out = new Uint8Array(12 + body.byteLength);
+  const dv = new DataView(out.buffer);
+  out.set(enc.encode('FORM'), 0);
+  dv.setUint32(4, sizeOverride === null ? 4 + body.byteLength : sizeOverride, false);
+  out.set(enc.encode(formType), 8);
+  out.set(body, 12);
+  return out;
+}
+
+/**
+ * Encode a number as an 80-bit IEEE extended float, the way AIFF stores its
+ * sample rate. Written independently of the parser's decoder so the test is a
+ * real check rather than the same arithmetic twice.
+ */
+export function extendedFloat80(value) {
+  const out = new Uint8Array(10);
+  if (value === 0) return out;
+
+  const sign = value < 0 ? 0x80 : 0;
+  let v = Math.abs(value);
+
+  // Normalise to [1, 2) and record the power of two.
+  let exponent = Math.floor(Math.log2(v));
+  let mantissaFloat = v / 2 ** exponent;
+  // Guard against log2 rounding landing just outside the range.
+  if (mantissaFloat >= 2) { mantissaFloat /= 2; exponent++; }
+  if (mantissaFloat < 1) { mantissaFloat *= 2; exponent--; }
+
+  const biased = exponent + 16383;
+  out[0] = sign | ((biased >> 8) & 0x7f);
+  out[1] = biased & 0xff;
+
+  // 64-bit mantissa with an explicit leading 1.
+  let mantissa = mantissaFloat * 2 ** 63;
+  for (let i = 9; i >= 2; i--) {
+    out[i] = mantissa % 256;
+    mantissa = Math.floor(mantissa / 256);
+  }
+  return out;
+}
+
+/** COMM chunk. Pass a compressionType to make it an AIFF-C file. */
+export function commChunk({
+  channels = 2,
+  numSampleFrames = 48000,
+  bitDepth = 24,
+  sampleRate = 48000,
+  compressionType = null,
+  compressionName = '',
+} = {}) {
+  const base = new Uint8Array(18);
+  const dv = new DataView(base.buffer);
+  dv.setUint16(0, channels, false);
+  dv.setUint32(2, numSampleFrames, false);
+  dv.setUint16(6, bitDepth, false);
+  base.set(extendedFloat80(sampleRate), 8);
+
+  if (!compressionType) return beChunk('COMM', base);
+
+  const nameBytes = enc.encode(compressionName);
+  const tail = new Uint8Array(4 + 1 + nameBytes.length);
+  tail.set(enc.encode(compressionType.padEnd(4)).subarray(0, 4), 0);
+  tail[4] = nameBytes.length; // Pascal string length
+  tail.set(nameBytes, 5);
+  return beChunk('COMM', concat(base, tail));
+}
+
+/**
+ * SSND chunk: offset(4) blockSize(4) then the samples.
+ * `bigEndian` false produces AIFF-C 'sowt' data.
+ */
+export function ssndChunk(samples, { offset = 0, blockSize = 0 } = {}) {
+  const head = new Uint8Array(8);
+  const dv = new DataView(head.buffer);
+  dv.setUint32(0, offset, false);
+  dv.setUint32(4, blockSize, false);
+  return beChunk('SSND', concat(head, new Uint8Array(offset), samples));
+}
+
+/** Interleaved PCM, big-endian by default (AIFF) or little-endian (sowt). */
+export function pcmDataBE({
+  frames = 48000,
+  channels = 2,
+  bitsPerSample = 24,
+  float = false,
+  bigEndian = true,
+  signed8 = true,
+  gen = () => 0,
+} = {}) {
+  const bytesPerSample = Math.ceil(bitsPerSample / 8);
+  const b = new Uint8Array(frames * channels * bytesPerSample);
+  const dv = new DataView(b.buffer);
+  const be = !bigEndian; // DataView takes littleEndian
+
+  for (let f = 0; f < frames; f++) {
+    for (let c = 0; c < channels; c++) {
+      const o = (f * channels + c) * bytesPerSample;
+      const v = gen(f, c);
+      if (float) {
+        if (bitsPerSample === 64) dv.setFloat64(o, v, be);
+        else dv.setFloat32(o, v, be);
+        continue;
+      }
+      switch (bitsPerSample) {
+        case 8:
+          if (signed8) dv.setInt8(o, Math.max(-128, Math.min(127, Math.round(v * 128))));
+          else dv.setUint8(o, Math.max(0, Math.min(255, Math.round(v * 128) + 128)));
+          break;
+        case 16:
+          dv.setInt16(o, Math.max(-32768, Math.min(32767, Math.round(v * 32768))), be);
+          break;
+        case 24: {
+          const iv = Math.max(-8388608, Math.min(8388607, Math.round(v * 8388608)));
+          const u = iv < 0 ? iv + 0x1000000 : iv;
+          if (bigEndian) {
+            dv.setUint8(o, (u >> 16) & 0xff);
+            dv.setUint8(o + 1, (u >> 8) & 0xff);
+            dv.setUint8(o + 2, u & 0xff);
+          } else {
+            dv.setUint8(o, u & 0xff);
+            dv.setUint8(o + 1, (u >> 8) & 0xff);
+            dv.setUint8(o + 2, (u >> 16) & 0xff);
+          }
+          break;
+        }
+        case 32:
+          dv.setInt32(o, Math.max(-2147483648, Math.min(2147483647, Math.round(v * 2147483648))), be);
+          break;
+        default:
+          throw new Error(`fixture generator cannot write ${bitsPerSample}-bit`);
+      }
+    }
+  }
+  return b;
+}
+
+/** Pascal-string text chunk (NAME, AUTH, ANNO, (c) ). */
+export function iffTextChunk(id, value) {
+  return beChunk(id, enc.encode(value));
+}
+
+/** MARK chunk with named markers. */
+export function markChunk(markers) {
+  const parts = [];
+  const head = new Uint8Array(2);
+  new DataView(head.buffer).setUint16(0, markers.length, false);
+  parts.push(head);
+  for (const m of markers) {
+    const nameBytes = enc.encode(m.name ?? '');
+    const b = new Uint8Array(7 + nameBytes.length + ((nameBytes.length + 1) % 2));
+    const dv = new DataView(b.buffer);
+    dv.setUint16(0, m.id, false);
+    dv.setUint32(2, m.position, false);
+    b[6] = nameBytes.length;
+    b.set(nameBytes, 7);
+    parts.push(b);
+  }
+  return beChunk('MARK', concat(...parts));
+}
+
+/** An ID3v2.3 tag, for embedding in AIFF/WAV or heading an MP3. */
+export function id3v2Tag(frames, { major = 3, unsynchronised = false } = {}) {
+  const frameBytes = [];
+  for (const [id, value, encoding = 3] of frames) {
+    const payload = encoding === 0
+      ? new Uint8Array([0, ...latin1Bytes(value)])
+      : new Uint8Array([encoding, ...enc.encode(value)]);
+    const h = new Uint8Array(major === 2 ? 6 : 10);
+    h.set(enc.encode(id).subarray(0, major === 2 ? 3 : 4), 0);
+    if (major === 2) {
+      h[3] = (payload.length >> 16) & 0xff;
+      h[4] = (payload.length >> 8) & 0xff;
+      h[5] = payload.length & 0xff;
+    } else if (major >= 4) {
+      const n = payload.length;
+      h[4] = (n >> 21) & 0x7f; h[5] = (n >> 14) & 0x7f;
+      h[6] = (n >> 7) & 0x7f; h[7] = n & 0x7f;
+    } else {
+      new DataView(h.buffer).setUint32(4, payload.length, false);
+    }
+    frameBytes.push(concat(h, payload));
+  }
+  const body = concat(...frameBytes);
+  const header = new Uint8Array(10);
+  header.set(enc.encode('ID3'), 0);
+  header[3] = major;
+  header[4] = 0;
+  header[5] = unsynchronised ? 0x80 : 0;
+  const n = body.byteLength;
+  header[6] = (n >> 21) & 0x7f;
+  header[7] = (n >> 14) & 0x7f;
+  header[8] = (n >> 7) & 0x7f;
+  header[9] = n & 0x7f;
+  return concat(header, body);
+}
+
+function latin1Bytes(s) {
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+  return out;
+}

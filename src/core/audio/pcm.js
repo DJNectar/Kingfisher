@@ -54,7 +54,16 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
   const frameBytes = bytesPerSample * f.channels;
   if (!frameBytes) return null;
 
-  const readSample = sampleReader(f.bitDepth, isFloat);
+  // AIFF and CAF store samples big-endian; AIFC "sowt" is little-endian inside
+  // a big-endian container. The parser records which, and null means the
+  // container's default (little-endian, as RIFF uses).
+  //
+  // 8-bit signedness is tracked separately because it does not follow from byte
+  // order: WAV's 8-bit is unsigned, AIFF's and CAF's is signed.
+  const readSample = sampleReader(f.bitDepth, isFloat, {
+    littleEndian: f.sampleEndianness !== 'big',
+    unsigned8: f.unsigned8Bit === true,
+  });
   if (!readSample) {
     return {
       measured: false,
@@ -168,7 +177,9 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
     longestFullScaleRun: Math.max(...channels.map((c) => c.longestFullScaleRun)),
     digitalSilence: channels.every((c) => c.digitalSilence),
     channels,
-    sampleFormat: `${f.bitDepth}-bit ${isFloat ? 'float' : 'integer'}`,
+    sampleFormat: `${f.bitDepth}-bit ${isFloat ? 'float' : 'integer'}${
+      f.sampleEndianness === 'big' ? ', big-endian' : ''
+    }`,
   };
 }
 
@@ -203,30 +214,52 @@ export function toDbfs(linear) {
  * bit depth is not one we can decode. Explicitly enumerated rather than
  * computed, because getting 24-bit sign extension subtly wrong is easy and
  * would quietly corrupt every level reading.
+ *
+ * @param {number} bitDepth
+ * @param {boolean} isFloat
+ * @param {{littleEndian?: boolean, unsigned8?: boolean}} opts
+ *
+ *   `littleEndian` is false for AIFF and big-endian CAF. Reading a big-endian
+ *   file as little-endian does not fail — it silently produces noise-like
+ *   garbage and a meaningless peak, which is the kind of confident wrong answer
+ *   this app exists to avoid.
+ *
+ *   `unsigned8` is a SEPARATE question from byte order, and the two must not be
+ *   inferred from each other: 8-bit WAV is unsigned (128 is silence) while
+ *   8-bit AIFF and CAF are signed (0 is silence), and CAF can be little-endian
+ *   and signed at the same time. Getting this backwards turns silence into a
+ *   full-scale DC offset.
  */
-export function sampleReader(bitDepth, isFloat) {
+export function sampleReader(bitDepth, isFloat, opts = {}) {
+  const { littleEndian = true, unsigned8 = false } = typeof opts === 'boolean'
+    ? { littleEndian: opts }
+    : opts;
+  const le = littleEndian;
+
   if (isFloat) {
-    if (bitDepth === 32) return (view, o) => view.getFloat32(o, true);
-    if (bitDepth === 64) return (view, o) => view.getFloat64(o, true);
+    if (bitDepth === 32) return (view, o) => view.getFloat32(o, le);
+    if (bitDepth === 64) return (view, o) => view.getFloat64(o, le);
     return null;
   }
   switch (bitDepth) {
     case 8:
-      // 8-bit WAV is unsigned with 128 as the zero point.
-      return (view, o) => (view.getUint8(o) - 128) / 128;
+      return unsigned8
+        ? (view, o) => (view.getUint8(o) - 128) / 128
+        : (view, o) => view.getInt8(o) / 128;
     case 16:
-      return (view, o) => view.getInt16(o, true) / 32768;
+      return (view, o) => view.getInt16(o, le) / 32768;
     case 24:
       return (view, o) => {
         const b0 = view.getUint8(o);
         const b1 = view.getUint8(o + 1);
         const b2 = view.getUint8(o + 2);
-        let v = b0 | (b1 << 8) | (b2 << 16);
+        // Byte order differs; sign extension does not.
+        let v = le ? b0 | (b1 << 8) | (b2 << 16) : b2 | (b1 << 8) | (b0 << 16);
         if (v & 0x800000) v -= 0x1000000; // sign extend
         return v / 8388608;
       };
     case 32:
-      return (view, o) => view.getInt32(o, true) / 2147483648;
+      return (view, o) => view.getInt32(o, le) / 2147483648;
     default:
       return null;
   }

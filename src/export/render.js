@@ -62,18 +62,36 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
   lines.push(...renderParseResult(report).map((l) => `  ${l}`));
 
   if (report.parse.status !== PARSE_STATUS.FAILED) {
+    const f = report.format;
+    const compressed = f.codecFamily === 'compressed';
+
     lines.push(section('FORMAT'));
     lines.push(row('Container', containerText(report)));
-    lines.push(row('Codec', report.format.codec));
-    lines.push(row('Sample rate', formatSampleRate(report.format.sampleRate)));
-    lines.push(row('Bit depth', formatBitDepth(report.format.bitDepth, report.format.codecFamily)));
-    if (report.format.validBits && report.format.validBits !== report.format.bitDepth) {
-      lines.push(row('Valid bits', `${report.format.validBits} of ${report.format.bitDepth}`));
+    lines.push(row('Codec', codecText(f)));
+    if (f.profile && f.profile !== f.codec) lines.push(row('Profile', f.profile));
+    lines.push(row('Sample rate', formatSampleRate(f.sampleRate)));
+
+    // Bit depth is a property of uncompressed audio. For a lossy codec there
+    // is no such thing, and printing the container's stock "16" would be a
+    // fabricated fact — so say why it is blank instead.
+    lines.push(row('Bit depth', bitDepthText(f)));
+    if (f.validBits && f.validBits !== f.bitDepth) {
+      lines.push(row('Valid bits', `${f.validBits} of ${f.bitDepth}`));
     }
-    lines.push(row('Channels', formatChannels(report.format.channels, report.format.layoutName)));
-    lines.push(row('Channel layout', layoutText(report.format)));
-    lines.push(row('Block align', report.format.blockAlign ? `${report.format.blockAlign} bytes` : UNKNOWN));
-    lines.push(row('Byte rate', report.format.byteRate ? `${report.format.byteRate.toLocaleString('en-US')} bytes/s` : UNKNOWN));
+    lines.push(row('Channels', formatChannels(f.channels, f.layoutName)));
+    lines.push(row('Channel layout', layoutText(f)));
+
+    if (f.bitrate) lines.push(row('Bitrate', bitrateText(f)));
+    if (f.encoder) lines.push(row('Encoder', f.encoder));
+
+    // Block alignment and byte rate describe fixed-size PCM frames; for a
+    // compressed stream they do not exist, so they are omitted rather than
+    // shown as dashes.
+    if (!compressed) {
+      lines.push(row('Block align', f.blockAlign ? `${f.blockAlign} bytes` : UNKNOWN));
+      lines.push(row('Byte rate', f.byteRate ? `${f.byteRate.toLocaleString('en-US')} bytes/s` : UNKNOWN));
+    }
+    if (f.sampleEndianness === 'big') lines.push(row('Byte order', 'big-endian'));
 
     lines.push(section('DURATION'));
     if (report.duration.seconds === null) {
@@ -97,6 +115,32 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
   lines.push(THIN);
   lines.push(`Kingfisher ${APP_VERSION} — read-only report. Nothing in the audio file was changed.`);
   return lines.join('\n');
+}
+
+/** Codec name, with whether it is lossless where that is known. */
+export function codecText(f) {
+  if (!f.codec) return UNKNOWN;
+  if (f.lossless === true && f.codecFamily === 'compressed') return `${f.codec} — lossless`;
+  if (f.lossless === false) return `${f.codec} — lossy`;
+  return f.codec;
+}
+
+/** Bit depth, or the reason there isn't one. */
+export function bitDepthText(f) {
+  if (f.bitDepth) return formatBitDepth(f.bitDepth, f.codecFamily);
+  if (f.codecFamily === 'compressed' && f.lossless === false) {
+    return 'not applicable — this is a lossy format, which does not store a bit depth';
+  }
+  return UNKNOWN;
+}
+
+export function bitrateText(f) {
+  if (!f.bitrate) return UNKNOWN;
+  const kbps = Math.round(f.bitrate / 1000);
+  const mode = f.bitrateMode && f.bitrateMode !== 'variable or constant — not stated in the file'
+    ? `, ${f.bitrateMode}`
+    : '';
+  return `${kbps} kbps${mode}  (calculated from the audio data and duration)`;
 }
 
 function containerText(report) {
@@ -261,7 +305,135 @@ function renderMetadata(report) {
   if (m.xmp) lines.push(section('XMP'), `  Present, ${m.xmp.byteLength} bytes.`);
   if (m.adm) lines.push(section('ADM (axml)'), `  Present, ${m.adm.byteLength} bytes.`);
 
-  const hasAny = m.bext || m.ixml || m.info || m.cue || m.smpl || m.acid || m.chna || m.xmp || m.adm;
+  if (m.id3v2) {
+    lines.push(section(`ID3 TAG (version ${m.id3v2.version})`));
+    const entries = Object.entries(m.id3v2.frames);
+    if (!entries.length) lines.push('  Present, but no readable fields were found.');
+    for (const [id, frame] of entries) lines.push(row(frame.name, `${frame.value}   [${id}]`));
+  }
+
+  if (m.id3v1) {
+    lines.push(section(`ID3v1 TAG (version ${m.id3v1.version})`));
+    for (const [label, value] of [
+      ['Title', m.id3v1.title], ['Artist', m.id3v1.artist], ['Album', m.id3v1.album],
+      ['Year', m.id3v1.year], ['Comment', m.id3v1.comment],
+      ['Track', m.id3v1.track], ['Genre', m.id3v1.genre],
+    ]) if (value) lines.push(row(label, String(value)));
+  }
+
+  if (m.itunes) {
+    lines.push(section('ITUNES / MP4 METADATA'));
+    for (const [id, tag] of Object.entries(m.itunes)) {
+      // The gapless blob is reported in its own section, decoded.
+      if (id === 'iTunSMPB') continue;
+      lines.push(row(tag.name, `${tag.value}${tag.freeForm ? '' : `   [${id}]`}`));
+    }
+    if (Object.keys(m.itunes).length === 1 && m.itunes.iTunSMPB) {
+      lines.push('  No title, artist or album tags are present in this file.');
+    }
+  }
+
+  if (m.codecConfig) {
+    lines.push(section('CODEC CONFIGURATION'));
+    lines.push(row('Object type', m.codecConfig.objectType));
+    if (m.codecConfig.profile) lines.push(row('Profile', m.codecConfig.profile));
+    if (m.codecConfig.sbr) lines.push(row('SBR', 'yes — spectral band replication'));
+    if (m.codecConfig.declaredAvgBitrate) {
+      lines.push(row('Declared average', `${Math.round(m.codecConfig.declaredAvgBitrate / 1000)} kbps  (as stated in the file)`));
+    }
+    if (m.codecConfig.declaredMaxBitrate) {
+      lines.push(row('Declared maximum', `${Math.round(m.codecConfig.declaredMaxBitrate / 1000)} kbps  (as stated in the file)`));
+    }
+  }
+
+  if (m.alac) {
+    lines.push(section('APPLE LOSSLESS (ALAC)'));
+    lines.push(row('Bit depth', `${m.alac.bitDepth}-bit`));
+    lines.push(row('Sample rate', formatSampleRate(m.alac.sampleRate)));
+    lines.push(row('Frame length', `${m.alac.frameLength.toLocaleString('en-US')} samples`));
+    if (m.alac.avgBitrate) lines.push(row('Average bitrate', `${Math.round(m.alac.avgBitrate / 1000)} kbps`));
+  }
+
+  if (m.gapless) {
+    lines.push(section('GAPLESS PLAYBACK INFORMATION'));
+    lines.push(row('Encoder delay', `${m.gapless.priming.toLocaleString('en-US')} samples at the start`));
+    lines.push(row('Padding', `${m.gapless.padding.toLocaleString('en-US')} samples at the end`));
+    lines.push(row('True audio length', `${formatDuration(m.gapless.trueSeconds)}  (${m.gapless.originalSampleCount.toLocaleString('en-US')} sample frames)`));
+    lines.push('  The duration above includes the silence the encoder adds; this is the real length.');
+  }
+
+  if (m.mpeg) {
+    lines.push(section('MPEG AUDIO'));
+    lines.push(row('Version', m.mpeg.version));
+    lines.push(row('Layer', m.mpeg.layer));
+    lines.push(row('Channel mode', m.mpeg.channelMode));
+    if (m.mpeg.emphasis && m.mpeg.emphasis !== 'none') lines.push(row('Emphasis', m.mpeg.emphasis));
+    lines.push(row('CRC protected', m.mpeg.crcProtected ? 'yes' : 'no'));
+    if (m.mpeg.frameCount) lines.push(row('Frames', m.mpeg.frameCount.toLocaleString('en-US')));
+    if (m.mpeg.vbrHeader) lines.push(row('VBR header', m.mpeg.vbrHeader));
+  }
+
+  if (m.lame) {
+    lines.push(section('LAME ENCODER TAG'));
+    if (m.lame.encoder) lines.push(row('Encoder', m.lame.encoder));
+    if (m.lame.peakAmplitude !== null && m.lame.peakAmplitude !== undefined) {
+      lines.push(row('Peak (as encoded)', formatDbfs(m.lame.peakDbfs)));
+    }
+    if (m.lame.encoderDelay !== null) {
+      lines.push(row('Encoder delay', `${m.lame.encoderDelay} samples`));
+      lines.push(row('Padding', `${m.lame.padding} samples`));
+    }
+    if (m.lame.bitrate) lines.push(row('Nominal bitrate', `${m.lame.bitrate} kbps`));
+  }
+
+  if (m.vorbisComment) {
+    lines.push(section('VORBIS COMMENTS'));
+    if (m.vorbisComment.vendor) lines.push(row('Vendor', m.vorbisComment.vendor));
+    for (const [key, value] of Object.entries(m.vorbisComment.tags)) {
+      lines.push(row(key, Array.isArray(value) ? value.join('; ') : value));
+    }
+  }
+
+  if (m.pictures?.length) {
+    lines.push(section('EMBEDDED ARTWORK'));
+    for (const p of m.pictures) {
+      lines.push(`  ${p.description || p.typeName || 'Image'} — ${p.mimeType}, ${p.width}×${p.height}, ${formatBytes(p.dataLength)}`);
+    }
+  }
+
+  if (m.iff) {
+    lines.push(section('AIFF TEXT CHUNKS'));
+    for (const [key, value] of Object.entries(m.iff)) {
+      lines.push(row(key.charAt(0).toUpperCase() + key.slice(1), value));
+    }
+  }
+
+  if (m.markers?.markers?.length) {
+    lines.push(section('MARKERS'));
+    for (const mk of m.markers.markers) {
+      const at = report.format.sampleRate ? `  ${formatDuration(mk.position / report.format.sampleRate)}` : '';
+      lines.push(`  #${mk.id}  at sample ${mk.position.toLocaleString('en-US')}${at}${mk.name ? `  "${mk.name}"` : ''}`);
+    }
+  }
+
+  if (m.instrument) {
+    lines.push(section('INSTRUMENT'));
+    lines.push(row('Root note', `MIDI ${m.instrument.baseNote}`));
+    lines.push(row('Detune', `${m.instrument.detuneCents} cents`));
+    lines.push(row('Key range', `MIDI ${m.instrument.lowNote}–${m.instrument.highNote}`));
+    lines.push(row('Gain', `${m.instrument.gainDb} dB`));
+  }
+
+  if (m.comments?.length) {
+    lines.push(section('COMMENTS'));
+    for (const c of m.comments) {
+      lines.push(`  ${c.timestamp ? formatTimestamp(c.timestamp) : 'undated'}: ${c.text}`);
+    }
+  }
+
+  const hasAny = m.bext || m.ixml || m.info || m.cue || m.smpl || m.acid || m.chna || m.xmp
+    || m.adm || m.id3v2 || m.id3v1 || m.itunes || m.iff || m.markers || m.instrument
+    || m.comments || m.vorbisComment || m.codecConfig || m.alac || m.mpeg || m.lame;
   if (!hasAny && report.parse.status !== PARSE_STATUS.FAILED) {
     lines.push(section('EMBEDDED METADATA'));
     lines.push('  None found. This file carries no bext, iXML or INFO metadata.');
