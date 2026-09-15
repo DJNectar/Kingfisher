@@ -383,7 +383,26 @@ function renderMetadata(report) {
       lines.push(row('Encoder delay', `${m.lame.encoderDelay} samples`));
       lines.push(row('Padding', `${m.lame.padding} samples`));
     }
-    if (m.lame.bitrate) lines.push(row('Nominal bitrate', `${m.lame.bitrate} kbps`));
+    if (m.lame.lowpassHz) lines.push(row('Lowpass filter', `${(m.lame.lowpassHz / 1000).toFixed(1)} kHz`));
+    if (m.lame.bitrate) {
+      // Byte 20 of the LAME tag is the ABR target for an ABR encode, and the
+      // MINIMUM bitrate for a VBR one — not the average. Calling it "nominal"
+      // invited it to be read as the file's actual bitrate.
+      lines.push(row(
+        'Encoder bitrate setting',
+        `${m.lame.bitrate} kbps  (the ABR target, or the lowest bitrate allowed for a variable-bitrate encode — not the file's average)`,
+      ));
+    }
+  }
+
+  if (m.flac) {
+    lines.push(section('FLAC STREAM DETAILS'));
+    lines.push(row('Compression', `${(m.flac.compressionRatio * 100).toFixed(1)}% of the uncompressed size`));
+    lines.push(row('Uncompressed', formatBytes(m.flac.uncompressedSize)));
+    lines.push(row('Audio MD5', m.flac.md5 ?? 'not present'));
+    lines.push(row('Block size', m.flac.fixedBlockSize
+      ? `${m.flac.minBlockSize} samples (fixed)`
+      : `${m.flac.minBlockSize}–${m.flac.maxBlockSize} samples (variable)`));
   }
 
   if (m.vorbisComment) {
@@ -433,7 +452,8 @@ function renderMetadata(report) {
 
   const hasAny = m.bext || m.ixml || m.info || m.cue || m.smpl || m.acid || m.chna || m.xmp
     || m.adm || m.id3v2 || m.id3v1 || m.itunes || m.iff || m.markers || m.instrument
-    || m.comments || m.vorbisComment || m.codecConfig || m.alac || m.mpeg || m.lame;
+    || m.comments || m.vorbisComment || m.codecConfig || m.alac || m.mpeg || m.lame
+    || m.flac || m.opus || m.vorbis || m.cafInfo || m.pictures;
   if (!hasAny && report.parse.status !== PARSE_STATUS.FAILED) {
     lines.push(section('EMBEDDED METADATA'));
     lines.push('  None found. This file carries no bext, iXML or INFO metadata.');
@@ -443,13 +463,23 @@ function renderMetadata(report) {
 
 function renderChunks(report) {
   if (!report.chunks.length) return [];
+
+  // File order, not the order the parser happened to find them in: an MP3's
+  // trailing ID3v1 tag is read early but sits at the end of the file, and a
+  // chunk map that is not in file order is a confusing chunk map.
+  const chunks = [...report.chunks].sort((a, b) => a.offset - b.offset);
+
+  // Size the identifier column to its widest entry — "VORBIS_COMMENT" and
+  // "STREAMINFO" are much wider than a four-character RIFF id.
+  const idWidth = Math.max(4, ...chunks.map((c) => String(c.id).length)) + 2;
+
   const lines = [section('CHUNKS FOUND')];
-  lines.push(`  ${'Offset'.padStart(12)}  ${'ID'.padEnd(6)}${'Size'.padStart(14)}  Contents`);
-  for (const c of report.chunks) {
+  lines.push(`  ${'Offset'.padStart(12)}  ${'ID'.padEnd(idWidth)}${'Size'.padStart(12)}  Contents`);
+  for (const c of chunks) {
     const desc = c.description || 'not decoded by this app';
     const note = c.note ? ` — ${c.note}` : '';
     lines.push(
-      `  ${String(c.offset).padStart(12)}  ${c.id.padEnd(6)}${String(c.size).padStart(14)}  ${desc}${note}`,
+      `  ${String(c.offset).padStart(12)}  ${String(c.id).padEnd(idWidth)}${String(c.size).padStart(12)}  ${desc}${note}`,
     );
   }
   return lines;

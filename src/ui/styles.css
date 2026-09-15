@@ -250,7 +250,13 @@ select:focus, input:focus, textarea:focus, .btn:focus-visible, .tab:focus-visibl
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.report-title { font-size: 15px; font-weight: 600; word-break: break-all; margin: 0; }
+.report-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  word-break: break-all;
+  margin: 0;
+}
 .report-sub { font-size: 12.5px; color: var(--text-faint); margin: 3px 0 0; }
 .report-body { padding: 16px; }
 

@@ -334,7 +334,7 @@ function metadataSections(report, collapsed) {
       ['Encoder delay', m.lame.encoderDelay !== null ? `${m.lame.encoderDelay} samples` : null],
       ['Padding', m.lame.padding !== null ? `${m.lame.padding} samples` : null],
       ['Lowpass', m.lame.lowpassHz ? `${(m.lame.lowpassHz / 1000).toFixed(1)} kHz` : null],
-      ['Nominal bitrate', m.lame.bitrate ? `${m.lame.bitrate} kbps` : null],
+      ['Encoder bitrate setting', m.lame.bitrate ? `${m.lame.bitrate} kbps (ABR target, or the lowest allowed for VBR)` : null],
     ]), { open: !collapsed }));
   }
 
@@ -561,7 +561,8 @@ function chunkSection(report) {
       }),
       table(
         [{ label: 'Offset', class: 'num' }, 'ID', { label: 'Size', class: 'num' }, { label: 'Contents', class: 'wrap' }],
-        report.chunks.map((c) => [
+        // File order, so a trailing tag reads as trailing.
+        [...report.chunks].sort((a, b) => a.offset - b.offset).map((c) => [
           c.offset.toLocaleString('en-US'),
           c.id,
           formatBytes(c.size).replace(/ \(.*\)$/, ''),
