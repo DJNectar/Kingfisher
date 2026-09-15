@@ -1,0 +1,11 @@
+{
+  "name": "kingfisher",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-only audio file inspector and per-client/project work log.",
+  "scripts": {
+    "test": "node --test test/",
+    "serve": "python3 -m http.server 8181"
+  }
+}
