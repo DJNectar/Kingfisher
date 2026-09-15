@@ -5,6 +5,12 @@
  * text) reaches the page through textContent, never innerHTML. A file name or a
  * metadata field containing "<script>" is content, not markup, and this is the
  * single place that guarantee is enforced.
+ *
+ * `el()` deliberately offers no way to set innerHTML. It once accepted an
+ * `html:` prop for literal markup; no call site ever used it, and it was
+ * removed so that the guarantee above is structural rather than a convention
+ * someone could reach past without noticing. Markup that genuinely needs
+ * building should be composed from el() calls, as the help tab does.
  */
 
 export function el(tag, props = {}, children = []) {
@@ -13,7 +19,6 @@ export function el(tag, props = {}, children = []) {
     if (value === null || value === undefined || value === false) continue;
     if (key === 'class') node.className = value;
     else if (key === 'text') node.textContent = value;
-    else if (key === 'html') node.innerHTML = value; // only ever called with literals
     else if (key === 'dataset') Object.assign(node.dataset, value);
     else if (key.startsWith('on') && typeof value === 'function') {
       node.addEventListener(key.slice(2).toLowerCase(), value);

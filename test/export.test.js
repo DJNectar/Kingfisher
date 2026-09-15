@@ -187,6 +187,7 @@ test('CSV quotes commas and quotes, and defuses formula injection', () => {
     ['has"quote', '=SUM(A1:A2)'],
     ['-leading', 'line\nbreak'],
     ['-6.02', '-12'],
+    ['\t=SUM(A1:A2)', '\r=1+1'],
   ]);
   const rows = csv.split('\r\n');
 
@@ -199,6 +200,11 @@ test('CSV quotes commas and quotes, and defuses formula injection', () => {
   assert.equal(rows[3], '\'-leading,"line\nbreak"');
   // Negative numbers are data, not formulas: they must stay sortable.
   assert.equal(rows[4], '-6.02,-12');
+  // A leading tab or carriage return reaches the formula parser too, because
+  // some spreadsheets skip that whitespace before reading the cell. The tab
+  // case needs no quoting; the carriage return one does, since CR is one of
+  // the characters RFC 4180 quoting covers.
+  assert.equal(rows[5], '\'\t=SUM(A1:A2),"\'\r=1+1"');
 });
 
 test('CSV carries the metadata columns a producer would sort on', async () => {

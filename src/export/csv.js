@@ -165,13 +165,23 @@ export function toCsv(rows) {
  *
  * A cell starting with =, +, - or @ is treated as a formula by Excel and
  * Numbers, so such a cell is prefixed with an apostrophe to force it to text.
+ *
+ * A leading tab or carriage return is guarded for the same reason: several
+ * spreadsheet implementations skip that whitespace when deciding how to read a
+ * cell, so "\t=SUM(A1:A2)" reaches the formula parser just as "=SUM(A1:A2)"
+ * does. Cheap to cover, and a cell can acquire one from metadata written by
+ * something else — a bext description or an iXML note is free-form text this
+ * app only passes along.
+ *
  * Plain numbers are exempt: nearly every level in this app is negative
  * (-6.02 dBFS), and quoting those would turn the column into text and break
- * the sorting that is the entire reason for exporting CSV.
+ * the sorting that is the entire reason for exporting CSV. The exemption is
+ * unaffected by the tab and carriage return above, since it matches only digit
+ * sequences with an optional sign, decimal part and exponent.
  */
 function csvCell(value) {
   let s = value === null || value === undefined ? '' : String(value);
-  if (/^[=+\-@]/.test(s) && !isPlainNumber(s)) s = `'${s}`;
+  if (/^[=+\-@\t\r]/.test(s) && !isPlainNumber(s)) s = `'${s}`;
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
