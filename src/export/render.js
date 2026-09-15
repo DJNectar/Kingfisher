@@ -153,16 +153,16 @@ function renderLevels(report) {
   lines.push(row('Full-scale samples', a.fullScaleSamples.toLocaleString('en-US')));
   lines.push(row('Longest run', `${a.longestFullScaleRun} consecutive samples at full scale`));
 
-  if (a.channels.length > 1 || true) {
-    lines.push('');
-    lines.push(`  ${'Channel'.padEnd(10)}${'Peak'.padStart(12)}${'RMS'.padStart(12)}${'Peak at'.padStart(12)}   DC offset`);
-    for (const c of a.channels) {
-      lines.push(
-        `  ${c.name.padEnd(10)}${formatDbfs(c.peakDbfs).padStart(12)}${formatDbfs(c.rmsDbfs).padStart(12)}${
-          (c.peakSeconds === null ? UNKNOWN : formatDuration(c.peakSeconds)).padStart(12)
-        }   ${(c.dcOffset * 100).toFixed(4)}%${c.digitalSilence ? '   (silent)' : ''}`,
-      );
-    }
+  // Per-channel breakdown, including for mono: a single "silent" marking is
+  // worth seeing, and a fixed layout keeps reports comparable to each other.
+  lines.push('');
+  lines.push(`  ${'Channel'.padEnd(10)}${'Peak'.padStart(12)}${'RMS'.padStart(12)}${'Peak at'.padStart(12)}   DC offset`);
+  for (const c of a.channels) {
+    lines.push(
+      `  ${c.name.padEnd(10)}${formatDbfs(c.peakDbfs).padStart(12)}${formatDbfs(c.rmsDbfs).padStart(12)}${
+        (c.peakSeconds === null ? UNKNOWN : formatDuration(c.peakSeconds)).padStart(12)
+      }   ${(c.dcOffset * 100).toFixed(4)}%${c.digitalSilence ? '   (silent)' : ''}`,
+    );
   }
   return lines;
 }

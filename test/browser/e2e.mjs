@@ -93,25 +93,31 @@ console.log('report cards rendered:', cards, '(expected 8)');
 console.log('batch summary:', (await page.locator('.panel h2').first().textContent()).trim());
 console.log('badges:', await page.locator('.panel .badge').allTextContents());
 
-// Verify specific findings surfaced in the UI
+// Verify specific findings surfaced in the UI.
+//
+// Only things visible in BATCH view are asserted here: with more than one file
+// on screen the metadata sections render collapsed, so their text is correctly
+// absent from innerText. The single-file checks below cover those.
+const failures = [];
 const bodyText = await page.locator('#results').innerText();
-const checks = [
-  ['48 kHz on riverbed', /48 kHz/],
-  ['24-bit', /24-bit/],
-  ['bext description', /SC 14 TK 3 — kitchen wide/],
-  ['timecode', /10:00:00\.000/],
-  ['iXML project', /Blue Room Sessions/],
-  ['clipping observed', /Flat-topped peaks/i],
-  ['silence observed', /entirely silent/i],
-  ['LFE silent', /channel(s)? is silent|1 of 6/i],
-  ['pulldown explained', /pull-down/i],
-  ['truncated', /shorter than the file says/i],
-  ['unreadable file', /could not be read/i],
-  ['RF64', /RF64/],
-];
-for (const [label, re] of checks) console.log(`  ${re.test(bodyText) ? 'OK  ' : 'MISS'} ${label}`);
+const expect = (label, re, text = bodyText) => {
+  const ok = re.test(text);
+  console.log(`  ${ok ? 'OK  ' : 'FAIL'} ${label}`);
+  if (!ok) failures.push(label);
+};
 
-await page.screenshot({ path: 'shot-reports.png', fullPage: false });
+expect('48 kHz on riverbed', /48 kHz/);
+expect('24-bit', /24-bit/);
+expect('clipping observed', /Flat-topped peaks/i);
+expect('silence observed', /entirely silent/i);
+expect('LFE silent', /1 of 6 channels is silent/i);
+expect('pulldown explained', /pull-down/i);
+expect('truncated data reported', /shorter than the header declares/i);
+expect('unreadable file', /could not be read/i);
+expect('RF64 container', /RF64/);
+expect('no invented values for the unreadable file', /—/);
+
+await page.screenshot({ path: join(HERE, 'shot-reports.png'), fullPage: false });
 
 // ---------------------------------------------------------------- 3. the log
 step('Project log');
@@ -143,7 +149,7 @@ await page.waitForTimeout(300);
 console.log('first todo done class:', await page.locator('.todo').first().getAttribute('class'));
 console.log('todo counts:', (await page.locator('.panel:has-text("To-do list") .muted').first().textContent()).trim());
 
-await page.screenshot({ path: 'shot-project.png', fullPage: false });
+await page.screenshot({ path: join(HERE, 'shot-project.png'), fullPage: false });
 
 // ------------------------------------------------------------- 5. exports
 step('Exports');
@@ -211,7 +217,7 @@ const reopenedLog = await page.locator('.panel:has-text("File check log") table.
 const reopenedTodos = await page.locator('.todo').count();
 console.log('  after reopen — log rows:', reopenedLog, '| todos:', reopenedTodos);
 
-await page.screenshot({ path: 'shot-reopened.png', fullPage: false });
+await page.screenshot({ path: join(HERE, 'shot-reopened.png'), fullPage: false });
 
 // ------------------------------------------------------------ 7. rename/delete
 step('Rename and delete');
@@ -230,8 +236,34 @@ await page.click('#modal button:has-text("Cancel")');
 await page.waitForTimeout(200);
 console.log('  cancelled, client still present:', /The Bandits Ltd/.test(await page.locator('#view-clients').innerText()));
 
-console.log('\n=== ERRORS ===');
-console.log(errors.length ? errors.join('\n') : 'none');
+// ------------------------------------------------- 8. single-file metadata
+// Run last, so checking one more file cannot perturb the log counts asserted
+// above. In batch view the metadata sections render collapsed by design, so
+// this is where their content is verified.
+step('Single-file view shows embedded metadata expanded');
+await page.click('.tab[data-view="inspect"]');
+await page.selectOption('#log-project', '');
+{
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([join(AUDIO, '01 riverbed.wav')]);
+  await page.waitForTimeout(1200);
+  const single = await page.locator('#results').innerText();
+  expect('bext description', /SC 14 TK 3 — kitchen wide/, single);
+  expect('bext originator', /Sound Devices 833/, single);
+  expect('bext timecode', /10:00:00\.000/, single);
+  expect('bext v2 loudness', /-23 LUFS/, single);
+  expect('coding history', /A=PCM,F=48000/, single);
+  expect('iXML project', /Blue Room Sessions/, single);
+  expect('iXML track name', /Boom/, single);
+  expect('INFO title', /Riverbed/, single);
+  expect('chunk map', /Chunks found/i, single);
+  await page.screenshot({ path: join(HERE, 'shot-single.png'), fullPage: false });
+}
+
+console.log('\n=== RESULT ===');
+console.log('page errors:', errors.length ? errors.join('\n') : 'none');
+console.log('failed assertions:', failures.length ? failures.join(', ') : 'none');
 
 await browser.close();
-process.exit(errors.length ? 1 : 0);
+process.exit(errors.length || failures.length ? 1 : 0);

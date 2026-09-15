@@ -87,7 +87,7 @@ export const RULES = [
       if (!short || short <= 0) return null;
       return {
         id: 'data-truncated',
-        title: 'Audio data is shorter than the file says it should be',
+        title: 'Audio data is shorter than the header declares',
         detail: `The file states its audio is ${bytes(r.audioData.declaredSize)} but only ${bytes(
           r.audioData.availableSize,
         )} are present — ${bytes(short)} missing. Any duration shown describes the audio that is actually there.`,

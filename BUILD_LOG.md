@@ -212,6 +212,34 @@ fragile of the two. Full run, all passing:
 - **Merge/conflict resolution for a library synced across two machines.** Stated
   as a known limitation in Help and ARCHITECTURE.md instead of half-solved.
 
+### Final pass — audit and hardening
+- Swept the codebase for comparison/judgement language. Remaining hits were
+  internal comments or the file disagreeing with **itself** (header vs. actual
+  bytes), which is legitimate; still rephrased two strings that read like a
+  verdict ("shorter than the file says it should be" → "shorter than the header
+  declares").
+- Removed dead code: an always-true `|| true` condition in the levels renderer,
+  and an unused parameter plus a duplicated branch in `codecFamily()`.
+- Added `test/qc.test.js` (15 tests). These run the rules against **hand-built
+  report objects with no parser and no file anywhere in scope** — which is the
+  proof of the decoupling claim, not just an assertion of it. They also cover
+  threshold boundaries (a full-scale run at exactly the threshold fires, one
+  below does not), mutual exclusions (whole-file silence suppresses the
+  per-channel observation; flat-topping suppresses peak-at-ceiling), and a
+  sweep asserting that **no rule, on 25 different inputs, ever emits judging
+  language** (`should be`, `expected`, `target`, `wrong`, `invalid`, `fail`,
+  `spec`, …).
+- Hardened the browser test: it now **fails the run** on a missed assertion
+  rather than printing "MISS" and exiting 0 — a test that reports failures as
+  passing output is worse than no test.
+
+### Bugs caught in the final pass
+14. The browser test carried a stale assertion string after the rephrasing
+    above, and was silently reporting it as a MISS while still exiting 0.
+15. My own QC test fixture varied the sample rate without updating `byteRate`,
+    so the byte-rate consistency rule fired correctly and the test blamed it.
+    Fixture fixed; the rule was right.
+
 ### Status — complete
 - [x] Byte layer, WAV/RIFF/RF64 parser, chunk decoders, report model, registry
 - [x] PCM scanner, QC engine + 23 rules

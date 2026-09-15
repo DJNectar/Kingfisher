@@ -260,7 +260,7 @@ async function walk(source, report) {
   if (riffSize !== null) {
     report.container.sizeMatches = riffSize === source.size;
     if (riffSize > source.size) {
-      addWarning(report, `The header says the file should be ${riffSize} bytes but it is ${source.size}. It looks incomplete.`);
+      addWarning(report, `The header describes a file of ${riffSize} bytes; this file is ${source.size}. It looks incomplete.`);
     }
   }
 
@@ -355,7 +355,7 @@ function applyFormat(report) {
   const f = report.format;
   f.codec = fmt.formatName;
   f.codecId = tag;
-  f.codecFamily = codecFamily(tag, fmt);
+  f.codecFamily = codecFamily(tag);
   f.sampleRate = fmt.sampleRate || null;
   f.bitDepth = fmt.bitsPerSample || null;
   f.validBits = fmt.validBitsPerSample;
@@ -386,11 +386,16 @@ function applyFormat(report) {
   }
 }
 
-function codecFamily(tag, fmt) {
+/**
+ * Which family a codec belongs to. This drives two decisions downstream: whether
+ * duration can be derived from byte count, and whether the sample scanner can
+ * measure levels. Anything that is not plain PCM or float is "compressed",
+ * meaning neither is attempted.
+ */
+function codecFamily(tag) {
   if (tag === 0x0001) return 'pcm-int';
   if (tag === 0x0003) return 'pcm-float';
   if (tag === null) return 'unknown';
-  if (tag === 0x0006 || tag === 0x0007) return 'compressed';
   return 'compressed';
 }
 
