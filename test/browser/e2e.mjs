@@ -261,6 +261,85 @@ await page.selectOption('#log-project', '');
   await page.screenshot({ path: join(HERE, 'shot-single.png'), fullPage: false });
 }
 
+// ------------------------------------------------ 9. levels by decoding
+// MP3 is an open codec, so every browser can decode it — unlike AAC, which
+// Chrome and Safari ship but open-source Chromium builds omit.
+step('Measure levels by decoding');
+await page.click('.tab[data-view="inspect"]');
+await page.selectOption('#log-project', '');
+{
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([join(AUDIO, '11 plain.mp3')]);
+  await page.waitForTimeout(1500);
+
+  const offer = page.locator('.measure-offer button');
+  expect('an offer to measure levels is shown', /./, (await offer.count()) ? 'yes' : '');
+  await offer.first().click();
+  await page.waitForSelector('.detail-section:has-text("Levels")', { timeout: 60000 });
+
+  // The Levels section renders already open for a single file, so clicking its
+  // summary unconditionally would close it and read back nothing.
+  const card = page.locator('.report').first();
+  const levelsSection = card.locator('.detail-section:has-text("Levels")');
+  if ((await levelsSection.getAttribute('open')) === null) {
+    await levelsSection.locator('summary').click();
+    await page.waitForTimeout(300);
+  }
+  const levels = await levelsSection.locator('.detail-body').innerText();
+  // The fixture's frames are zero-filled, so it decodes to real silence and
+  // correctly reads -∞ dBFS. Accept either form: what matters is that a peak
+  // was reported at all.
+  expect('a peak level is reported', /Peak\s+(-?[\d.]+|-∞)\s*dBFS/, levels);
+  // Detecting the silence proves the samples were actually measured rather
+  // than the section being filled in with placeholders.
+  expect('the silent fixture measures as silent', /silent/i, levels);
+  expect('every frame was measured', /460,800 of 460,800/, levels);
+  expect('the source is named as decoded', /decoded audio/i, levels);
+  expect('the decoder is named', /Chrome|Safari|Firefox|this browser/, levels);
+  const obs = (await card.locator('.obs-title').allInnerTexts()).join(' | ');
+  expect('the decoded-measurement note is raised', /decoding the audio/i, obs);
+}
+
+// ------------------------------------------------------- 10. provenance
+step('Provenance: declared, possible, and nothing found');
+{
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([
+    join(AUDIO, '09 declared-ai.m4a'),
+    join(AUDIO, '10 tool-tagged.mp3'),
+    join(AUDIO, '01 riverbed.wav'),
+  ]);
+  await page.waitForTimeout(3000);
+
+  const declared = await page.locator('.report').nth(0).locator('.ai-flag').innerText();
+  expect('a declaring manifest is reported as declared', /declares that it was AI-generated/i, declared);
+  expect('its reasons are listed', /What raised this/i, declared);
+  expect('the generative model assertion is named', /generative model/i, declared);
+  expect('and it is not claimed as verified', /did not verify the signature/i, declared);
+
+  const tagged = await page.locator('.report').nth(1).locator('.ai-flag').innerText();
+  expect('a tool-tagged file reads as possible, not declared', /Possibly AI-generated/i, tagged);
+  expect('the tool is named', /Suno/, tagged);
+  expect('the phrase in the comment is a separate reason', /"AI-generated"/i, tagged);
+
+  // The ordinary file must NOT be flagged, and must not read as a clean result.
+  const plainCard = page.locator('.report').nth(2);
+  expect('an ordinary file raises no flag badge', /^$/,
+    (await plainCard.locator('.obs-title').allInnerTexts()).filter((t) => /AI-generated/i.test(t)).join(''));
+  const plainProv = plainCard.locator('.detail-section:has-text("Origin and provenance")');
+  if ((await plainProv.getAttribute('open')) === null) {
+    await plainProv.locator('summary').click();
+    await page.waitForTimeout(300);
+  }
+  const plain = await plainCard.locator('.ai-flag').innerText();
+  expect('nothing found is stated plainly', /No signs of AI generation were found/i, plain);
+  expect('and never as a clean bill of health', /not a clean bill of health/i, plain);
+  expect('with the watermark limit stated', /watermark/i, plain);
+}
+await page.screenshot({ path: join(HERE, 'shot-provenance.png'), fullPage: false });
+
 console.log('\n=== RESULT ===');
 console.log('page errors:', errors.length ? errors.join('\n') : 'none');
 console.log('failed assertions:', failures.length ? failures.join(', ') : 'none');

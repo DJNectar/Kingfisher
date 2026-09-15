@@ -74,6 +74,37 @@ w('07 not-audio.wav', new Uint8Array([0x4f, 0x67, 0x67, 0x53, ...new Array(1000)
   ], { magic: 'RF64', sizeOverride: 0xffffffff }));
 }
 
+// --- provenance fixtures ---------------------------------------------------
+
+// A C2PA manifest that DECLARES generative origin, in an MP4 uuid box. This is
+// the strongest provenance signal the app can find, so it needs coverage.
+{
+  const declaration = new TextEncoder().encode(
+    'http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia'
+    + '"claim_generator":"Suno/4.0"',
+  );
+  w('09 declared-ai.m4a', F.minimalM4a({
+    extraTopLevel: [F.c2paUuidBox(F.concat(F.c2paManifestBytes({ extra: 0 }), declaration))],
+  }));
+}
+
+// A generator named in an encoder field, plus a generative phrase in a real
+// comment frame — the "possibly" tier rather than the "declares" one.
+w('10 tool-tagged.mp3', F.mp3File({
+  id3v2: F.id3v2TagWithRaw(
+    [['TIT2', 'Midnight Drive'], ['TSSE', 'Suno v4']],
+    [F.id3CommFrame('ai-generated, prompt: 80s synthwave night drive')],
+  ),
+  frames: Array.from({ length: 200 }, () => F.mp3Frame({})),
+}));
+
+// A real MP3 with nothing of the sort, for the "measure levels" path: MP3 is an
+// open codec, so every browser can decode it.
+w('11 plain.mp3', F.mp3File({
+  id3v2: F.id3v2Tag([['TIT2', 'Ordinary Take'], ['TSSE', 'LAME3.100']]),
+  frames: Array.from({ length: 400 }, () => F.mp3Frame({})),
+}));
+
 // A non-audio file, to prove folder scans skip them
 writeFileSync(`${dir}/notes.txt`, 'not audio');
 console.log('fixtures written to', dir);

@@ -449,6 +449,62 @@ free-text phrase detection had not actually been exercised.
 **162 tests passing.** Verified in the browser across three cases: a manifest
 declaring generation, a Suno-tagged MP3, and an ordinary recording.
 
+---
+
+## Session 5 — 2026-09-15 (security review fixes, and closing loops)
+
+### Two findings from a manual security review, applied
+1. **Removed the unused `innerHTML` sink** in `src/ui/dom.js`. `el()` accepted an
+   `html:` prop annotated "only ever called with literals". Confirmed by grep
+   that no call site used it, and that it was the ONLY `innerHTML` assignment
+   in the codebase. Dead today, but the file header promises everything reaches
+   the page through `textContent`, and leaving the prop there invited a future
+   feature to contradict that without noticing. The guarantee is now structural.
+2. **Extended the CSV formula-injection guard** to treat a leading tab or
+   carriage return as a trigger. Some spreadsheets skip that whitespace before
+   reading a cell, so `"\t=SUM(A1:A2)"` reaches the formula parser exactly as
+   `"=SUM(A1:A2)"` does — and a cell can pick one up from free-form metadata the
+   app only passes along. The `isPlainNumber()` exemption is untouched, so
+   negative dBFS values stay numeric and sortable.
+
+The existing formula-injection test gained a case rather than a new test being
+added. **Verified the assertion fails with the guard reverted** and passes with
+it, so it covers the fix rather than merely passing alongside it.
+
+Explicitly NOT touched: the IndexedDB-stored file handle in
+`src/store/persistence.js`, which is a reviewed and accepted trade-off.
+
+### Closing an open loop: browser coverage had fallen behind
+`npm run test:browser` had not been run since the six new formats, the
+Measure-levels button and the provenance section landed. It still passed — but
+it only covered the ORIGINAL workflow. The newer features had been verified in
+throwaway scripts that were never committed, which is coverage that decays
+silently.
+
+The committed e2e now also covers:
+- **Measuring levels by decoding** — offer shown, peak reported, source named as
+  decoded, the decoder named, every frame accounted for, and the note raised.
+- **Provenance at all three tiers** — a C2PA manifest declaring generative
+  origin, a tool-tagged file reading as "possibly" rather than "declares", and
+  an ordinary file that must be flagged as nothing-found WITHOUT reading as a
+  clean result.
+
+MP3 is used for the decode test on purpose: it is an open codec, so it decodes
+in any browser, whereas AAC is absent from open-source Chromium builds.
+
+**37 browser assertions, all passing. 162 unit tests, all passing.**
+
+### Two test bugs found in my own test code
+21. The e2e clicked a `<details>` summary unconditionally to open it — but the
+    Levels section renders already open for a single file, so the click CLOSED
+    it and read back nothing. Now checks the `open` attribute first.
+22. An assertion expected a numeric dBFS reading, but the synthetic MP3 fixture
+    is zero-filled and so decodes to genuine silence, correctly reporting
+    `-∞ dBFS`. The app was right and the assertion was wrong. Rewritten to
+    accept either, and strengthened: it now also asserts the silence IS
+    detected, which proves the samples were really measured rather than the
+    section being filled with placeholders.
+
 ### Status — complete
 - [x] Byte layer, WAV/RIFF/RF64 parser, chunk decoders, report model, registry
 - [x] PCM scanner, QC engine + 23 rules
