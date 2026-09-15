@@ -301,13 +301,22 @@ export const RULES = [
       const a = r.audio;
       if (!a?.measured || a.digitalSilence) return null;
       if (a.longestFullScaleRun < THRESHOLDS.clipRunSamples) return null;
+      // A decoded signal that overshoots full scale is described by its own
+      // rule, which says it accurately. Saying "flat-topped" here as well
+      // would be both redundant and wrong: the waveform is not flat, it is
+      // simply past the ceiling, and a float can carry that.
+      if (a.source === 'decoded' && a.peak > 1) return null;
+
       const worst = a.channels.reduce((w, c) => (c.longestFullScaleRun > w.longestFullScaleRun ? c : w));
+      const ceiling = a.source === 'decoded'
+        ? 'the maximum level a converter can reproduce'
+        : 'the maximum value the format can hold';
       return {
         id: 'full-scale-run',
         title: 'Flat-topped peaks at full scale',
         detail: `${a.fullScaleSamples.toLocaleString(
           'en-US',
-        )} samples sit at the maximum value the format can hold, with runs of up to ${
+        )} samples sit at ${ceiling}, with runs of up to ${
           worst.longestFullScaleRun
         } consecutive samples (longest in ${worst.name}). Runs like this are what clipped audio looks like.`,
       };
@@ -374,6 +383,50 @@ export const RULES = [
         detail: offenders
           .map((c) => `${c.name}: ${(c.dcOffset * 100).toFixed(3)}% of full scale`)
           .join('; ') + '. The waveform is not centred on zero.',
+      };
+    },
+  },
+  {
+    /**
+     * The finding that justifies decoding at all: a lossy encoder can produce
+     * a file that goes past full scale when decoded, even when the audio it
+     * was given peaked safely below. Nothing in the file's header shows this —
+     * it only appears once something has decoded the audio.
+     */
+    id: 'decoded-above-full-scale',
+    severity: SEVERITY.ATTENTION,
+    evaluate(r) {
+      const a = r.audio;
+      if (!a?.measured || a.source !== 'decoded') return null;
+      if (r.format.lossless !== false) return null; // lossless decodes exactly
+      if (a.peak <= 1) return null;
+      return {
+        id: 'decoded-above-full-scale',
+        title: `Decoded audio peaks at ${fmtDb(a.peakDbfs)} dBFS, above full scale`,
+        detail: `When decoded, this file goes ${fmtDb(a.peakDbfs)} dB past the maximum level a converter can reproduce, across ${a.fullScaleSamples.toLocaleString(
+          'en-US',
+        )} samples. Lossy encoding can push peaks above the level of the audio that went in, and the file's own header gives no sign of it. This is what audible distortion on playback looks like, even when the material before encoding was clean.`,
+      };
+    },
+  },
+  {
+    id: 'decoded-measurement-note',
+    severity: SEVERITY.INFO,
+    evaluate(r) {
+      const a = r.audio;
+      if (!a?.measured || a.source !== 'decoded') return null;
+      const drift = a.containerSeconds !== null && a.decodedSeconds !== undefined
+        ? Math.abs(a.containerSeconds - a.decodedSeconds)
+        : 0;
+      const driftNote = drift > 0.005
+        ? ` The decoded audio is ${drift.toFixed(3)} seconds ${
+          a.decodedSeconds < a.containerSeconds ? 'shorter' : 'longer'
+        } than the duration in the file's header, which is normal: a decoder trims the silence the encoder adds at each end.`
+        : '';
+      return {
+        id: 'decoded-measurement-note',
+        title: 'Levels measured by decoding the audio',
+        detail: `These levels describe the audio as ${a.decodedBy ?? 'this browser'} decodes it — what a listener's converter actually receives — rather than anything stated in the file. A different decoder may differ very slightly.${driftNote}`,
       };
     },
   },

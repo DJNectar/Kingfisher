@@ -319,6 +319,56 @@ four text encodings, unsynchronisation; plus ID3v1), used by MP3, AIFF and FLAC.
   since that is a measurement already in the file.
 - **WMA, WavPack, Monkey's Audio, DSD.** Not common on a Mac music/post desk.
 
+---
+
+## Session 3 — 2026-09-15 (decoded level measurement)
+
+### Implemented
+- `src/core/audio/measure.js` — the measurement arithmetic, extracted so that
+  BOTH paths use it: samples read from a file, and samples handed over by a
+  decoder. Two implementations would drift, and then the same audio would
+  measure differently depending on how it arrived. `pcm.js` was refactored onto
+  it (130 tests still green afterwards).
+- `src/core/audio/decode.js` — browser decode via `decodeAudioData`, with
+  codec-support detection (`canPlayType`) and a 400 MB decoded-size guard.
+- Two new rules: `decoded-above-full-scale` (the finding that justifies the
+  feature) and `decoded-measurement-note` (explains the source and the
+  decoded-vs-header length difference).
+- UI: an opt-in **Measure levels** button per file and **Measure all levels**
+  for a batch. Never automatic.
+
+### Why opt-in rather than automatic
+Decoding needs the whole file in memory and then the whole decoded result on
+top, as 32-bit floats — about 10 MB per stereo minute. A two-hour recording
+would be ~2.4 GB and take the tab down, hence the guard. It is also a real
+departure from "this app never decodes audio", which should be the user's call.
+
+### The testability problem, and how it was handled
+`decodeAudioData` does not exist in Node, so this could not be covered by the
+unit suite as written. Splitting the work in two solved it: **getting** the
+samples is the browser's job (browser-tested), **measuring** them is a pure
+function over Float32Arrays (Node-tested). Everything except the decode call
+itself is under test. One test asserts the two paths produce identical object
+shapes, so a field cannot silently go missing downstream.
+
+### Verified (how)
+- `npm test` — **140 passing** (10 new).
+- In Chromium against the user's real files:
+  - MP3 (5:22, VBR 258 kbps): peak **-0.48 dBFS**, RMS -16.23. Decoded length
+    5:21.965 against the header's 5:22.011 — a 46 ms difference that is exactly
+    the LAME encoder delay (576) plus padding (1483). Shown, and explained.
+  - FLAC (1:43): peak **-0.40 dBFS**, RMS -14.53, decoded in 191 ms.
+  - The WAV in the same batch correctly shows NO offer, because its levels were
+    already measured from its own samples, which is more direct.
+
+### Codec availability is a real constraint, not a theoretical one
+Measured directly via `canPlayType`: FLAC, MP3, Opus and Vorbis decode in every
+browser tested, because they are open formats. **AAC and ALAC are patented**:
+Chrome and Safari on macOS ship them, the open-source Chromium used for testing
+here does not. So the AAC path cannot be verified in this environment — only in
+the user's own browser. The UI says which codec a browser lacks rather than
+showing a dead button.
+
 ### Status — complete
 - [x] Byte layer, WAV/RIFF/RF64 parser, chunk decoders, report model, registry
 - [x] PCM scanner, QC engine + 23 rules

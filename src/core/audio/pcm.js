@@ -1,9 +1,13 @@
 /**
- * Sample scanner.
+ * Sample scanner: reads PCM sample bytes straight out of a file.
  *
- * Reads the audio data and measures it: peak, RMS, DC offset, full-scale runs,
- * and per-channel silence. It measures and reports numbers — deciding whether
- * any of them is worth mentioning is the rules' job, not this module's.
+ * The arithmetic itself lives in `measure.js`, shared with the decode path, so
+ * that audio measured from a WAV and the same audio measured after decoding an
+ * MP3 are computed by exactly the same code. This module's job is only getting
+ * the samples out of the bytes correctly.
+ *
+ * It measures and reports numbers — deciding whether any of them is worth
+ * mentioning is the rules' job, not this module's.
  *
  * Memory: the data is read in windows aligned to frame boundaries, so a 20GB
  * RF64 file is scanned with a few megabytes of RAM. Very large files are
@@ -11,6 +15,13 @@
  * a measurement that covered 8% of the file is labelled as such rather than
  * being presented as the whole truth.
  */
+
+import {
+  newChannelAccumulator,
+  accumulate,
+  finishStats,
+  toDbfs,
+} from './measure.js';
 
 /** Read this much per window. */
 const WINDOW_BYTES = 4 * 1024 * 1024;
@@ -78,17 +89,7 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
   const ranges = planRanges(a.offset, totalBytes, frameBytes, maxScanBytes);
   const threshold = fullScaleThreshold(f.bitDepth, isFloat);
 
-  // Per-channel accumulators.
-  const ch = Array.from({ length: f.channels }, () => ({
-    peak: 0,
-    peakFrame: 0,
-    sumSquares: 0,
-    sum: 0,
-    fullScaleSamples: 0,
-    longestFullScaleRun: 0,
-    currentRun: 0,
-    nonZeroSamples: 0,
-  }));
+  const ch = Array.from({ length: f.channels }, () => newChannelAccumulator());
 
   let framesScanned = 0;
   let bytesScanned = 0;
@@ -107,28 +108,9 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
 
       const baseFrame = (pos - a.offset) / frameBytes;
       for (let o = 0; o < usable; o += frameBytes) {
+        const frameIndex = baseFrame + o / frameBytes;
         for (let c = 0; c < f.channels; c++) {
-          const v = readSample(view, o + c * bytesPerSample);
-          const acc = ch[c];
-          const abs = v < 0 ? -v : v;
-
-          if (abs > acc.peak) {
-            acc.peak = abs;
-            acc.peakFrame = baseFrame + o / frameBytes;
-          }
-          acc.sumSquares += v * v;
-          acc.sum += v;
-          if (v !== 0) acc.nonZeroSamples++;
-
-          if (abs >= threshold) {
-            acc.fullScaleSamples++;
-            acc.currentRun++;
-            if (acc.currentRun > acc.longestFullScaleRun) {
-              acc.longestFullScaleRun = acc.currentRun;
-            }
-          } else {
-            acc.currentRun = 0;
-          }
+          accumulate(ch[c], readSample(view, o + c * bytesPerSample), frameIndex, threshold);
         }
         framesScanned++;
       }
@@ -141,46 +123,19 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
 
   if (!framesScanned) return null;
 
-  const channels = ch.map((acc, i) => {
-    const rms = Math.sqrt(acc.sumSquares / framesScanned);
-    return {
-      index: i,
-      name: f.layoutChannels?.[i] ?? `Ch ${i + 1}`,
-      peak: acc.peak,
-      peakDbfs: toDbfs(acc.peak),
-      peakFrame: acc.peakFrame,
-      peakSeconds: f.sampleRate ? acc.peakFrame / f.sampleRate : null,
-      rms,
-      rmsDbfs: toDbfs(rms),
-      dcOffset: acc.sum / framesScanned,
-      fullScaleSamples: acc.fullScaleSamples,
-      longestFullScaleRun: acc.longestFullScaleRun,
-      digitalSilence: acc.nonZeroSamples === 0,
-    };
-  });
-
-  const peak = Math.max(...channels.map((c) => c.peak));
-  const rmsOverall = Math.sqrt(
-    channels.reduce((s, c) => s + c.rms * c.rms, 0) / channels.length,
-  );
-
-  return {
-    measured: true,
-    complete: bytesScanned >= totalBytes,
-    coverage: totalBytes ? bytesScanned / totalBytes : 1,
+  return finishStats({
+    accumulators: ch,
     framesScanned,
     totalFrames,
-    peak,
-    peakDbfs: toDbfs(peak),
-    rmsDbfs: toDbfs(rmsOverall),
-    fullScaleSamples: channels.reduce((s, c) => s + c.fullScaleSamples, 0),
-    longestFullScaleRun: Math.max(...channels.map((c) => c.longestFullScaleRun)),
-    digitalSilence: channels.every((c) => c.digitalSilence),
-    channels,
+    sampleRate: f.sampleRate,
+    channelNames: f.layoutChannels,
+    bytesScanned,
+    totalBytes,
     sampleFormat: `${f.bitDepth}-bit ${isFloat ? 'float' : 'integer'}${
       f.sampleEndianness === 'big' ? ', big-endian' : ''
     }`,
-  };
+    source: 'file bytes',
+  });
 }
 
 /**
@@ -203,11 +158,8 @@ function planRanges(offset, totalBytes, frameBytes, maxScanBytes) {
   return ranges;
 }
 
-/** dBFS, with a floor so digital silence reports as -Infinity rather than NaN. */
-export function toDbfs(linear) {
-  if (!(linear > 0)) return -Infinity;
-  return 20 * Math.log10(linear);
-}
+// Re-exported from measure.js, where the shared definition lives.
+export { toDbfs };
 
 /**
  * Returns a function reading one sample as a float in [-1, 1], or null when the

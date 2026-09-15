@@ -47,6 +47,8 @@ import {
 import { reportsToCsv, historyToCsv } from '../export/csv.js';
 import { textToPdfBlob } from '../export/pdf.js';
 import { renderReportCard } from './views/report-view.js';
+import { decodeAndMeasure, decodeAvailability } from '../core/audio/decode.js';
+import { runRules } from '../core/qc/engine.js';
 import { renderClients } from './views/clients-view.js';
 import { renderHelp } from './views/help-view.js';
 
@@ -60,6 +62,13 @@ const state = {
   view: 'inspect',
   nav: {},
   reports: [],
+  /**
+   * The original File for each report, kept so that levels can be measured
+   * later by decoding. Keyed by report id rather than held on the report
+   * itself, because a report gets serialised into the library file and a File
+   * handle has no business being written to disk.
+   */
+  files: new Map(),
   lastSource: null,
   logTarget: { clientId: '', projectId: '' },
 };
@@ -165,9 +174,92 @@ function renderInspect() {
       renderReportCard(report, {
         collapsedByDefault: state.reports.length > 1,
         onExport: (kind) => exportReports([report], kind, report.file.name ?? 'report'),
+        onMeasureLevels: measureLevelsFor,
       }),
     );
   }
+}
+
+/**
+ * Decode one file and fold the measurement into its report.
+ *
+ * The observations are recomputed afterwards, so the levels feed the same rules
+ * as any other measurement — including the one that catches a lossy file
+ * peaking above full scale, which is the reason for offering this at all.
+ */
+async function measureLevelsFor(report) {
+  const file = state.files.get(report.id);
+  if (!file) {
+    throw new Error('The original file is no longer available in this session. Check it again to measure its levels.');
+  }
+
+  const stats = await decodeAndMeasure(file, report);
+  report.audio = stats;
+  report.observations = runRules(report);
+
+  // A logged copy of this report should gain the levels too, if it is in the
+  // library — otherwise the history would disagree with what is on screen.
+  if (state.library) {
+    for (const client of state.library.clients) {
+      for (const project of client.projects) {
+        for (const entry of project.log) {
+          if (entry.report?.id === report.id) {
+            entry.report.audio = stats;
+            entry.observations = report.observations.map((o) => ({
+              id: o.id, ruleId: o.ruleId, severity: o.severity, title: o.title, detail: o.detail,
+            }));
+            entry.summary.peakDbfs = stats.peakDbfs;
+            actions.markDirty();
+          }
+        }
+      }
+    }
+  }
+
+  render();
+  toast(`Levels measured: peak ${stats.peakDbfs.toFixed(2)} dBFS.`, 'success');
+}
+
+/** Measure every file in the current batch that can be decoded. */
+async function measureAllLevels() {
+  const candidates = state.reports.filter((r) => decodeAvailability(r).offer);
+  if (!candidates.length) {
+    toast('None of these files can be decoded in this browser.', 'error');
+    return;
+  }
+
+  const progress = $('#progress');
+  const fill = $('#progress-fill');
+  const text = $('#progress-text');
+  progress.hidden = false;
+
+  let done = 0;
+  let failed = 0;
+  for (const report of candidates) {
+    fill.style.width = `${(done / candidates.length) * 100}%`;
+    text.textContent = `Decoding ${done + 1} of ${candidates.length}: ${report.file.name}`;
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      const file = state.files.get(report.id);
+      if (!file) throw new Error('file no longer available');
+      const stats = await decodeAndMeasure(file, report);
+      report.audio = stats;
+      report.observations = runRules(report);
+    } catch {
+      failed++;
+    }
+    done++;
+  }
+
+  progress.hidden = true;
+  text.textContent = '';
+  render();
+  toast(
+    failed
+      ? `Measured ${done - failed} of ${candidates.length}; ${failed} could not be decoded.`
+      : `Measured levels for ${done} file${done === 1 ? '' : 's'}.`,
+    failed ? 'error' : 'success',
+  );
 }
 
 function batchSummary(reports) {
@@ -183,6 +275,14 @@ function batchSummary(reports) {
         state.lastSource ? el('p', { class: 'muted', style: 'margin:2px 0 0', text: state.lastSource }) : null,
       ]),
       el('div', { class: 'btn-row' }, [
+        reports.some((r) => decodeAvailability(r).offer)
+          ? el('button', {
+            class: 'btn btn-small btn-primary',
+            text: 'Measure all levels',
+            title: 'Decode the compressed files in this batch to measure their levels',
+            onclick: () => measureAllLevels(),
+          })
+          : null,
         el('button', { class: 'btn btn-small', text: 'Copy all', onclick: () => exportReports(reports, 'copy', 'batch') }),
         el('button', { class: 'btn btn-small', text: '.txt', onclick: () => exportReports(reports, 'txt', 'batch') }),
         el('button', { class: 'btn btn-small', text: '.csv', onclick: () => exportReports(reports, 'csv', 'batch') }),
@@ -248,6 +348,9 @@ async function runInspection(entries, sourceLabel) {
   const text = $('#progress-text');
   progress.hidden = false;
 
+  // Release the previous batch's files before holding a new set.
+  state.files.clear();
+
   const reports = [];
   for (let i = 0; i < audio.length; i++) {
     const { file, path } = audio[i];
@@ -264,6 +367,7 @@ async function runInspection(entries, sourceLabel) {
         lastModified: file.lastModified,
       });
       reports.push(report);
+      state.files.set(report.id, file);
     } catch (err) {
       // inspectSource returns a report even for unreadable files, so reaching
       // here means something unexpected. Keep going and say so.

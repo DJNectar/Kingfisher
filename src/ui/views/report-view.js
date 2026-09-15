@@ -8,7 +8,8 @@
  *   4. Everything else, collapsed: metadata, levels per channel, chunk map.
  */
 
-import { el, kv, section, table } from '../dom.js';
+import { el, kv, section, table, toast } from '../dom.js';
+import { decodeAvailability } from '../../core/audio/decode.js';
 import { PARSE_STATUS } from '../../core/report.js';
 import { SEVERITY_LABELS } from '../../core/qc/severity.js';
 import {
@@ -25,7 +26,11 @@ import {
 
 const SEVERITY_ICON = { attention: '!', notice: '•', info: 'i' };
 
-export function renderReportCard(report, { onExport = null, collapsedByDefault = false } = {}) {
+export function renderReportCard(report, {
+  onExport = null,
+  collapsedByDefault = false,
+  onMeasureLevels = null,
+} = {}) {
   const card = el('div', { class: 'report' });
 
   // ---- head
@@ -61,6 +66,7 @@ export function renderReportCard(report, { onExport = null, collapsedByDefault =
 
     // ---- 4. detail
     if (report.audio?.measured) body.append(levelsSection(report, collapsedByDefault));
+    else body.append(measureOffer(report, onMeasureLevels));
     const meta = metadataSections(report, collapsedByDefault);
     for (const s of meta) body.append(s);
     body.append(chunkSection(report));
@@ -157,7 +163,11 @@ function factStrip(report) {
   );
 
   if (report.audio?.measured) {
-    facts.push(['Peak', formatDbfs(report.audio.peakDbfs, 1).replace(' dBFS', ''), 'dBFS']);
+    facts.push([
+      'Peak',
+      formatDbfs(report.audio.peakDbfs, 1).replace(' dBFS', ''),
+      report.audio.source === 'decoded' ? 'dBFS, decoded' : 'dBFS',
+    ]);
   } else if (!lossy || !f.bitrate) {
     facts.push(['Peak', null, 'not measured']);
   }
@@ -197,21 +207,81 @@ export function observationList(observations) {
   );
 }
 
+/**
+ * Offer to decode, where the file's levels could not be read from its bytes.
+ *
+ * This is deliberately a button rather than something that happens by itself:
+ * decoding is slow, holds the whole file in memory, and is a departure from
+ * the app's usual "never decodes audio" behaviour. When it cannot be offered,
+ * the reason is shown rather than a dead control.
+ */
+function measureOffer(report, onMeasureLevels) {
+  if (!onMeasureLevels) return el('div', { hidden: true });
+
+  const availability = decodeAvailability(report);
+  const wrap = el('div', { class: 'measure-offer' });
+
+  if (!availability.offer) {
+    // Nothing to say when levels already came from the file's own samples.
+    if (report.audio?.measured) return el('div', { hidden: true });
+    wrap.append(el('p', { class: 'muted', style: 'margin:0', text: availability.reason ?? '' }));
+    return wrap;
+  }
+
+  const size = availability.estimatedBytes
+    ? ` It needs about ${Math.round(availability.estimatedBytes / 1048576)} MB of memory and takes a moment.`
+    : '';
+
+  const button = el('button', { class: 'btn btn-small btn-primary', text: 'Measure levels' });
+  wrap.append(
+    el('div', {}, [
+      el('p', { style: 'margin:0 0 8px' }, [
+        el('strong', { text: 'Levels can be measured by decoding this file. ' }),
+        'That shows what a listener actually hears, including peaks that lossy encoding can push above full scale — which nothing in the file itself reveals.',
+        size,
+      ]),
+      el('div', { class: 'btn-row' }, [button]),
+    ]),
+  );
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    button.textContent = 'Decoding…';
+    try {
+      await onMeasureLevels(report);
+    } catch (err) {
+      button.disabled = false;
+      button.textContent = 'Measure levels';
+      toast(err.message, 'error');
+    }
+  });
+
+  return wrap;
+}
+
 function levelsSection(report, collapsed) {
   const a = report.audio;
-  const coverage = a.complete
-    ? 'whole file measured'
-    : `${(a.coverage * 100).toFixed(1)}% of the file measured`;
+  const coverage = a.source === 'decoded'
+    ? `decoded by ${a.decodedBy ?? 'this browser'}`
+    : a.complete
+      ? 'whole file measured'
+      : `${(a.coverage * 100).toFixed(1)}% of the file measured`;
 
   const body = el('div', {}, [
     kv([
       ['Peak', formatDbfs(a.peakDbfs)],
       ['RMS', formatDbfs(a.rmsDbfs)],
+      ['Measured from', a.source === 'decoded'
+        ? `the decoded audio (${a.decodedBy ?? 'this browser'})`
+        : "the file's own samples"],
       ['Sample format', a.sampleFormat],
       ['Samples at full scale', a.fullScaleSamples.toLocaleString('en-US')],
       ['Longest full-scale run', `${a.longestFullScaleRun} samples`],
       ['Frames measured', `${a.framesScanned.toLocaleString('en-US')} of ${a.totalFrames.toLocaleString('en-US')}`],
-    ]),
+      ['Decoded length', a.source === 'decoded' && a.decodedSeconds !== undefined
+        ? `${formatDuration(a.decodedSeconds)} (the header says ${formatDuration(a.containerSeconds)})`
+        : null],
+    ].filter(([, v]) => v !== null)),
     el('div', { style: 'height:12px' }),
     table(
       ['Channel', { label: 'Peak', class: 'num' }, { label: 'RMS', class: 'num' }, { label: 'Peak at', class: 'num' }, { label: 'DC offset', class: 'num' }, 'Note'],
