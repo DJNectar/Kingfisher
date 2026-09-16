@@ -1,9 +1,10 @@
 # Kingfisher
 
-A local, offline audio file reporter for macOS. Open a WAV file — or a whole
+A local, offline audio file reporter for macOS. Open an audio file — or a whole
 folder of them — and Kingfisher tells you what is in it: sample rate, bit depth,
-channels, duration, embedded BWF/iXML/INFO metadata, and measured levels. It
-keeps a per-client, per-project history of the files you have checked.
+channels, duration, embedded metadata, measured levels, and what the file
+records about how it was made. It keeps a per-client, per-project history of
+the files you have checked.
 
 **It reports; it does not judge.** There is no target spec and no
 "pass/fail" anywhere in the app. Kingfisher states what a file contains and
@@ -38,15 +39,15 @@ machine only and publishes nothing.
 
 ## What it reads
 
-| Format | Notes | Levels measured |
+| Format | Notes | Levels |
 |---|---|---|
 | **WAV** | PCM 8/16/24/32-bit, IEEE float 32/64-bit, `WAVE_FORMAT_EXTENSIBLE`, RF64/BW64 for files over 4GB | yes |
 | **AIFF / AIFF-C** | Big-endian PCM, float, and the little-endian `sowt` variant most Mac software writes | yes |
 | **CAF** | Apple's Core Audio Format, big- or little-endian, 64-bit sizes | yes (LPCM) |
-| **FLAC** | Exact sample count and audio MD5 from STREAMINFO | no — would need decoding |
-| **M4A / MP4** | AAC (with profile and gapless data) and ALAC | no — would need decoding |
-| **MP3** | Every MPEG version and layer; exact frame-counted duration | no — would need decoding |
-| **Ogg** | Vorbis, Opus (pre-skip handled) and FLAC-in-Ogg | no — would need decoding |
+| **FLAC** | Exact sample count and audio MD5 from STREAMINFO | on request, by decoding |
+| **M4A / MP4** | AAC (with profile and gapless data) and ALAC | on request, by decoding |
+| **MP3** | Every MPEG version and layer; exact frame-counted duration | on request, by decoding |
+| **Ogg** | Vorbis, Opus (pre-skip handled) and FLAC-in-Ogg | on request, by decoding |
 
 Metadata read: BWF `bext` (description, originator, date/time, 64-bit timecode,
 UMID, loudness, coding history), `iXML`, `LIST`/`INFO`, `cue`/`adtl`, `smpl`,
@@ -74,8 +75,11 @@ Some deliberate absences:
 
 - **Bit depth is blank for lossy formats**, because they have none. Showing the
   container's stock "16" would be a fabricated fact.
-- **Levels are not measured for compressed formats**, because that means
-  decoding the audio, which this app does not do. The report says so.
+- **Levels are not measured for compressed formats until you ask.** Uncompressed
+  formats are scanned from their own samples; a compressed one gets a "Measure
+  levels" button that decodes it in the browser. Opt-in because decoding is real
+  work, and the report always names which of the two it did, so a scanned level
+  is never confused with a decoded one.
 
 Adding a format is a new module in `src/core/parsers/` plus a
 `registerParser()` call — no changes to the UI, rules or exporters.
