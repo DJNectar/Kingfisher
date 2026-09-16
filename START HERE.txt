@@ -1,0 +1,161 @@
+KINGFISHER
+What's in your audio files.
+
+
+WHAT THIS IS
+------------------------------------------------------------------
+
+Kingfisher opens an audio file and tells you what is actually inside
+it: sample rate, bit depth, channels, exact duration, whatever
+metadata the file is carrying, and how loud it is. Point it at one
+file or at a whole folder.
+
+It reads WAV, AIFF, MP3, M4A, FLAC, CAF and Ogg.
+
+Three things it will never do:
+
+  - It never changes your audio. Files are opened read-only. Nothing
+    is played, converted, renamed, moved or re-saved.
+  - It never sends anything anywhere. There is no account and no
+    server. Pull your network cable out and it still works.
+  - It never tells you a file is wrong. There is no pass/fail and no
+    target spec. It reports what is there and points out anything
+    unusual about the file itself. What that means for your job is
+    your call, not the app's.
+
+
+STARTING IT
+------------------------------------------------------------------
+
+1. Unzip the folder somewhere you'll find it again — Documents,
+   Applications, Desktop, wherever suits.
+
+2. Open the folder and double-click:  start.command
+
+3. A black Terminal window opens and Chrome opens to the app.
+
+Leave that Terminal window open the whole time you're using
+Kingfisher. It is the app. Closing it stops the app. When you're
+finished, close the window or press Control-C in it.
+
+To use it again later, double-click start.command again.
+
+
+IF IT WON'T START
+------------------------------------------------------------------
+
+macOS is suspicious of anything downloaded from the internet, so the
+first launch may be blocked. There are three things it might say.
+All three are one-time fixes.
+
+  "start.command cannot be opened because it is from an
+   unidentified developer"
+
+    Right-click (or Control-click) start.command and choose Open
+    from the menu, then click Open in the box that appears. You only
+    have to do this once — after that, double-clicking works.
+
+    If there's no Open button, go to the Apple menu > System
+    Settings > Privacy & Security, scroll down, and click
+    "Open Anyway". On older Macs that's System Preferences >
+    Security & Privacy > General.
+
+  "permission denied"
+
+    The zip lost the flag that marks the file as runnable. To put it
+    back, open Terminal (Applications > Utilities > Terminal), type
+    this, with a space after the x:
+
+        chmod +x 
+
+    ...then DRAG the start.command file from Finder into the
+    Terminal window — it'll fill in the path for you — and press
+    Return. Nothing will appear to happen. That's correct. Now
+    double-click start.command again.
+
+  A box asking to install "command line developer tools"
+
+    Click Install and wait for it to finish (a few minutes), then
+    double-click start.command again. Kingfisher uses a small piece
+    of software Apple ships with every Mac, and this is macOS
+    fetching it on first use.
+
+
+YOUR FIRST TWO MINUTES
+------------------------------------------------------------------
+
+Click "Check a file…" and pick something. You'll get a report on
+screen straight away.
+
+At the top of the report is the answer to "did it read the whole
+file". Below that are the headline facts, then anything worth
+noting, then the detail — click any section heading to fold it away,
+or use "Collapse all" in the top right.
+
+"Check a folder…" does the same for everything in a folder at once,
+and gives you a summary across all of them.
+
+You can also just drag files onto the window.
+
+
+KEEPING A RECORD (OPTIONAL)
+------------------------------------------------------------------
+
+Kingfisher can keep a dated log of every file you've checked,
+organised by client and by project. You don't have to use this at
+all — checking a file someone sent you is a one-off, and it treats
+it as one.
+
+If you do want a history:
+
+  - Go to the Projects tab and start a library. A library is a
+    single file holding all your clients, projects, logs and
+    to-do lists. You choose where it lives. Put it in Dropbox or
+    iCloud Drive if you want it on two machines.
+
+  - After that, every time you check files, Kingfisher asks where
+    the results should go. Pick a project, start a new one right
+    there in that window, or leave it on "Just this once" and
+    nothing is recorded.
+
+IMPORTANT: Kingfisher does not save by itself. When you have
+unsaved changes an orange "Unsaved changes" badge appears at the top
+— click Save. This is deliberate: a file being rewritten constantly
+on a synced drive is how Dropbox and iCloud end up leaving you with
+duplicate "conflicted copy" files.
+
+
+CHROME OR SAFARI
+------------------------------------------------------------------
+
+Both work. Chrome is better, because it can save straight back to
+your library file and reopen it next time you start up.
+
+Safari can't write to a file, so Save downloads a fresh copy to your
+Downloads folder instead, and you have to move it back over the old
+one yourself. The app tells you which of the two you're in — it's in
+the bar across the top.
+
+
+SENDING A REPORT TO SOMEONE
+------------------------------------------------------------------
+
+Every report has four buttons at the bottom:
+
+  Copy text   straight into an email or a message
+  .txt        a plain text file
+  .csv        opens in Numbers or Excel, one row per file — this is
+              the one for sorting a big delivery
+  .pdf        a proper document, the one to send a client
+
+They work on a single file, a whole folder, a project's history, a
+client's entire history, or everything you've ever checked.
+
+
+STUCK?
+------------------------------------------------------------------
+
+There's a Help tab inside the app. It's not a token one — it
+explains every part of the app in plain language, including what
+each technical term actually means and why some values come back
+blank.

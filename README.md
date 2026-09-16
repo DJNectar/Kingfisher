@@ -117,5 +117,7 @@ src/ui/               views
 test/                 node --test suites
 ```
 
+`OVERVIEW.md` is the feature-by-feature tour, and `START HERE.txt` is the
+plain-language guide to hand to someone who just wants to run it.
 See `ARCHITECTURE.md` for the design decisions and `BUILD_LOG.md` for how it
 was built, including what broke along the way.
