@@ -546,10 +546,17 @@ click. By the time the results are on screen the choice has been made for you,
 and the checks are logged nowhere. So the question is now asked at the moment
 of import, before a single byte is read:
 
+- **Just this once — don't log it**, which is what the window leads with and
+  selects by default
 - an existing project, listed under the client it belongs to
 - a new project — under an existing client, or a brand new client named right
   there in the same window
-- or "Don't log — just show me"
+
+Filing is optional and the one-off comes first on purpose. Checking a file
+someone has sent over is a one-off far more often than it is the start of a
+project, and a window that leads with paperwork is a window that gets clicked
+through. A project is pre-selected only when one is genuinely in hand: the
+project you came in from, or the one the last import went to.
 
 `chooseDestination()` resolves to a plain descriptor and never touches the
 library itself; creating a client or project is a change to the document that

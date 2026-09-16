@@ -326,8 +326,8 @@ function renderLogTarget() {
     : null;
 
   host.textContent = project
-    ? `Results will be logged to ${project.client.name} › ${project.project.name}. You are asked on every import.`
-    : 'You are asked where to file the results on every import.';
+    ? `Results will be logged to ${project.client.name} › ${project.project.name}. You are asked on every import, and can check a one-off without filing it.`
+    : 'You are asked where to file the results on every import. A one-off check needs no project.';
 }
 
 // ------------------------------------------------------------- inspect run

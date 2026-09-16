@@ -29,13 +29,16 @@ const NONE = '__none__';
 
 export function chooseDestination({ library, fileCount, current = {} }) {
   const clients = library ? L.sortedClients(library) : [];
-  const hasProjects = clients.some((c) => c.projects.length);
 
   const noun = `${fileCount} file${fileCount === 1 ? '' : 's'}`;
 
   // ------------------------------------------------------------ the controls
 
   const target = el('select', { id: 'dest-target' });
+  // First, because it is the answer that asks nothing of you. Checking a file
+  // someone sent over is a one-off far more often than it is the start of a
+  // project, and a window that leads with paperwork gets clicked through.
+  target.append(el('option', { value: NONE, text: 'Just this once — don\u2019t log it' }));
   for (const client of clients) {
     if (!client.projects.length) continue;
     const group = el('optgroup', { label: client.name });
@@ -45,7 +48,6 @@ export function chooseDestination({ library, fileCount, current = {} }) {
     target.append(group);
   }
   target.append(el('option', { value: NEW, text: '+ New project…' }));
-  target.append(el('option', { value: NONE, text: "Don't log — just show me" }));
 
   const clientPick = el('select', { id: 'dest-client' });
   for (const client of clients) {
@@ -81,9 +83,12 @@ export function chooseDestination({ library, fileCount, current = {} }) {
 
   // ------------------------------------------------------- opening selection
 
+  // A project is pre-selected only when one is genuinely in hand — the project
+  // you came in from, or the one the last import went to. Otherwise the one-off
+  // leads, and filing is something you reach for rather than something you have
+  // to dismiss.
   const currentValue = `${current.clientId ?? ''}|${current.projectId ?? ''}`;
-  if ([...target.options].some((o) => o.value === currentValue)) target.value = currentValue;
-  else if (!hasProjects) target.value = library ? NEW : NONE;
+  target.value = [...target.options].some((o) => o.value === currentValue) ? currentValue : NONE;
   if (!clients.length) clientPick.value = NEW;
   sync();
 
@@ -94,7 +99,7 @@ export function chooseDestination({ library, fileCount, current = {} }) {
       class: 'muted',
       style: 'margin-top:0',
       text: library
-        ? `${noun} ready to check. Filing them under a project keeps a dated record of what you checked and what it contained.`
+        ? `${noun} ready to check. Filing is optional — a one-off check needs no project. Filing under one keeps a dated record of what you checked and what it contained.`
         : `${noun} ready to check. No library is open, so there is nowhere to file them — the results will be shown but not logged.`,
     }),
     library ? field('Log results to', target, 'dest-target') : null,

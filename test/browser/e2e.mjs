@@ -60,6 +60,7 @@ async function dontLog(p) {
   await p.click('.modal button[type="submit"]');
 }
 
+
 await page.goto(`${BASE}/index.html`, { waitUntil: 'networkidle' });
 
 // ---------------------------------------------------------------- 1. library
@@ -364,6 +365,15 @@ step('Destination window creates a client and a project');
   await page.click('#btn-pick-files');
   (await c).setFiles([join(AUDIO, '01 riverbed.wav')]);
   await page.waitForSelector('#dest-target');
+
+  // A project is never required. With none in hand the window leads with the
+  // one-off and selects it, so checking a file someone sent over is a confirm.
+  expect('the one-off is the first thing offered', /Just this once/,
+    await page.locator('#dest-target option').first().textContent());
+  expect('and it is what is selected by default', /Just this once/,
+    await page.locator('#dest-target option:checked').textContent());
+  expect('no project name is asked for until one is wanted', /false/,
+    String(await page.locator('#dest-project-name').isVisible()));
 
   await page.selectOption('#dest-target', '__new__');
   await page.selectOption('#dest-client', '__new__');
