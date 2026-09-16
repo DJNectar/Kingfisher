@@ -196,7 +196,7 @@ main { padding: 20px; max-width: 1180px; margin: 0 auto; }
 .pick-panel { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .pick-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .drop-hint { color: var(--text-faint); font-size: 12.5px; }
-.pick-target { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+.pick-target { margin: 0; font-size: 13px; color: var(--text-dim); }
 
 select, input[type="text"], textarea {
   background: var(--bg-sunken);
@@ -657,6 +657,18 @@ pre.raw {
 .modal label { display: block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 4px; }
 .modal input[type="text"], .modal textarea { width: 100%; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+.modal select { width: 100%; }
+
+/* The import destination window. The "new project" block is indented under
+   the choice that reveals it, so it reads as part of that answer rather than
+   as three more questions. */
+.dest-new {
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  margin: 0 0 4px 4px;
+}
+.dest-new .field:last-child { margin-bottom: 0; }
+
 .modal .warning { background: var(--attention-bg); border: 1px solid var(--attention); border-radius: var(--radius); padding: 10px 12px; font-size: 13px; }
 
 /* ------------------------------------------------------------- responsive */

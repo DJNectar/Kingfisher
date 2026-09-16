@@ -20,7 +20,7 @@
 
   <nav class="tabs" role="tablist" aria-label="Main sections">
     <button class="tab" role="tab" data-view="inspect" aria-selected="true">Inspect</button>
-    <button class="tab" role="tab" data-view="clients" aria-selected="false">Clients</button>
+    <button class="tab" role="tab" data-view="clients" aria-selected="false">Projects</button>
     <button class="tab" role="tab" data-view="help" aria-selected="false">Help</button>
   </nav>
 </header>
@@ -50,12 +50,7 @@
         <button class="btn btn-primary" id="btn-pick-folder">Check a folder…</button>
         <span class="drop-hint" id="drop-hint">…or drag files and folders anywhere on this page</span>
       </div>
-      <div class="pick-target" id="pick-target">
-        <label for="log-project">Log results to</label>
-        <select id="log-project">
-          <option value="">Don't log — just show me</option>
-        </select>
-      </div>
+      <p class="pick-target" id="pick-target"></p>
     </div>
 
     <div class="progress" id="progress" hidden>
@@ -78,7 +73,7 @@
     </div>
   </section>
 
-  <!-- ============================================================ CLIENTS -->
+  <!-- =========================================================== PROJECTS -->
   <section class="view" id="view-clients" role="tabpanel" hidden>
     <div id="clients-content"></div>
   </section>

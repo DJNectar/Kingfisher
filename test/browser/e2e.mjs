@@ -53,6 +53,13 @@ page.on('pageerror', e => errors.push(`pageerror: ${e.message}\n${e.stack}`));
 
 const step = (s) => console.log(`\n=== ${s} ===`);
 
+/** Answer the import destination window with "don't log — just show me". */
+async function dontLog(p) {
+  await p.waitForSelector('#dest-target');
+  await p.selectOption('#dest-target', '__none__');
+  await p.click('.modal button[type="submit"]');
+}
+
 await page.goto(`${BASE}/index.html`, { waitUntil: 'networkidle' });
 
 // ---------------------------------------------------------------- 1. library
@@ -80,12 +87,17 @@ console.log('project heading:', (await page.locator('#view-clients h2').first().
 step('Check files into the project');
 await page.click('button:has-text("Check files into this project")');
 await page.waitForTimeout(200);
-console.log('log target selected:', await page.locator('#log-project').inputValue() !== '' ? 'yes' : 'NO');
+console.log('remembered destination line:', (await page.locator('#pick-target').textContent()).trim());
 
 const chooserPromise = page.waitForEvent('filechooser');
 await page.click('#btn-pick-files');
 const chooser = await chooserPromise;
 await chooser.setFiles(files);
+// The destination window opens before a byte is read. It should already have
+// the project chosen by "Check files into this project" selected.
+await page.waitForSelector('#dest-target');
+console.log('destination preselected:', (await page.locator('#dest-target option:checked').textContent()).trim());
+await page.click('.modal button[type="submit"]');
 await page.waitForTimeout(2500);
 
 const cards = await page.locator('.report').count();
@@ -242,11 +254,11 @@ console.log('  cancelled, client still present:', /The Bandits Ltd/.test(await p
 // this is where their content is verified.
 step('Single-file view shows embedded metadata expanded');
 await page.click('.tab[data-view="inspect"]');
-await page.selectOption('#log-project', '');
 {
   const c = page.waitForEvent('filechooser');
   await page.click('#btn-pick-files');
   (await c).setFiles([join(AUDIO, '01 riverbed.wav')]);
+  await dontLog(page);
   await page.waitForTimeout(1200);
   const single = await page.locator('#results').innerText();
   expect('bext description', /SC 14 TK 3 — kitchen wide/, single);
@@ -266,11 +278,11 @@ await page.selectOption('#log-project', '');
 // Chrome and Safari ship but open-source Chromium builds omit.
 step('Measure levels by decoding');
 await page.click('.tab[data-view="inspect"]');
-await page.selectOption('#log-project', '');
 {
   const c = page.waitForEvent('filechooser');
   await page.click('#btn-pick-files');
   (await c).setFiles([join(AUDIO, '11 plain.mp3')]);
+  await dontLog(page);
   await page.waitForTimeout(1500);
 
   const offer = page.locator('.measure-offer button');
@@ -311,6 +323,7 @@ step('Provenance: declared, possible, and nothing found');
     join(AUDIO, '10 tool-tagged.mp3'),
     join(AUDIO, '01 riverbed.wav'),
   ]);
+  await dontLog(page);
   await page.waitForTimeout(3000);
 
   const declared = await page.locator('.report').nth(0).locator('.ai-flag').innerText();
@@ -339,6 +352,57 @@ step('Provenance: declared, possible, and nothing found');
   expect('with the watermark limit stated', /watermark/i, plain);
 }
 await page.screenshot({ path: join(HERE, 'shot-provenance.png'), fullPage: false });
+
+// ------------------------------- 11. filing an import into a new project
+// The destination window is the only way to choose where checks are filed, so
+// its create-as-you-go path is the one that has to work: a brand new client
+// and a new project under it, named in the same window as the import.
+step('Destination window creates a client and a project');
+{
+  await page.click('.tab[data-view="inspect"]');
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([join(AUDIO, '01 riverbed.wav')]);
+  await page.waitForSelector('#dest-target');
+
+  await page.selectOption('#dest-target', '__new__');
+  await page.selectOption('#dest-client', '__new__');
+  expect('naming a new client is asked for', /true/,
+    String(await page.locator('#dest-client-name').isVisible()));
+  await page.fill('#dest-client-name', 'Wren Recordings');
+  await page.fill('#dest-project-name', 'Session tapes');
+  await page.screenshot({ path: join(HERE, 'shot-destination.png'), fullPage: false });
+  await page.click('.modal button[type="submit"]');
+  await page.waitForTimeout(1500);
+
+  expect('the new destination is shown under the Check buttons', /Wren Recordings › Session tapes/,
+    await page.locator('#pick-target').textContent());
+
+  await page.click('.tab[data-view="clients"]');
+  await page.waitForTimeout(400);
+  const roster = await page.locator('#view-clients').innerText();
+  expect('the tab lists projects by client', /Projects by client/, roster);
+  expect('the new client is in the roster', /Wren Recordings/, roster);
+  expect('with the check already logged to it', /1 project/, roster);
+
+  // And a second import into an existing client, choosing a new project only.
+  await page.click('.tab[data-view="inspect"]');
+  const c2 = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c2).setFiles([join(AUDIO, '02 clipped.wav')]);
+  await page.waitForSelector('#dest-target');
+  expect('the last destination is remembered as the default', /Session tapes/,
+    await page.locator('#dest-target option:checked').textContent());
+  await page.selectOption('#dest-target', '__new__');
+  await page.selectOption('#dest-client', await page.locator('#dest-client option', { hasText: 'Wren Recordings' }).getAttribute('value'));
+  expect('an existing client needs no name', /false/,
+    String(await page.locator('#dest-client-name').isVisible()));
+  await page.fill('#dest-project-name', 'Mix revisions');
+  await page.click('.modal button[type="submit"]');
+  await page.waitForTimeout(1500);
+  expect('the second project is filed under the same client', /Wren Recordings › Mix revisions/,
+    await page.locator('#pick-target').textContent());
+}
 
 console.log('\n=== RESULT ===');
 console.log('page errors:', errors.length ? errors.join('\n') : 'none');

@@ -14,6 +14,7 @@
  */
 
 import { $, el, clear, toast, modal, confirmDialog } from './dom.js';
+import { chooseDestination } from './views/destination.js';
 import { BlobByteSource } from '../core/bytes.js';
 import { inspectSource } from '../core/registry.js';
 import { PARSE_STATUS } from '../core/report.js';
@@ -163,7 +164,7 @@ function renderInspect() {
   clear(results);
 
   $('#inspect-empty').hidden = state.reports.length > 0;
-  renderLogTargetSelect();
+  renderLogTarget();
 
   if (!state.reports.length) return;
 
@@ -301,33 +302,88 @@ function batchSummary(reports) {
   return panel;
 }
 
-function renderLogTargetSelect() {
-  const select = $('#log-project');
-  const previous = `${state.logTarget.clientId}|${state.logTarget.projectId}`;
-  clear(select);
-  select.append(el('option', { value: '', text: "Don't log — just show me" }));
+/**
+ * The line under the Check buttons, showing where the next import will be
+ * filed. It is a statement, not a control: the destination is chosen in the
+ * window that opens on import, so there is one place to set it rather than
+ * two that can disagree.
+ */
+function renderLogTarget() {
+  const host = $('#pick-target');
+  if (!host) return;
+  const { clientId, projectId } = state.logTarget;
+  const project = clientId && projectId && state.library
+    ? (() => {
+        try {
+          return { client: L.getClient(state.library, clientId), project: L.getProject(state.library, clientId, projectId) };
+        } catch {
+          // The project was deleted since it was chosen. Forget it rather than
+          // logging into something that no longer exists.
+          state.logTarget = { clientId: '', projectId: '' };
+          return null;
+        }
+      })()
+    : null;
 
-  if (state.library) {
-    for (const client of L.sortedClients(state.library)) {
-      if (!client.projects.length) continue;
-      const group = el('optgroup', { label: client.name });
-      for (const project of client.projects) {
-        group.append(el('option', { value: `${client.id}|${project.id}`, text: project.name }));
-      }
-      select.append(group);
-    }
-  }
-
-  select.value = [...select.options].some((o) => o.value === previous) ? previous : '';
-  if (select.value !== previous) state.logTarget = { clientId: '', projectId: '' };
+  host.textContent = project
+    ? `Results will be logged to ${project.client.name} › ${project.project.name}. You are asked on every import.`
+    : 'You are asked where to file the results on every import.';
 }
 
-$('#log-project')?.addEventListener('change', (e) => {
-  const [clientId = '', projectId = ''] = e.target.value.split('|');
-  state.logTarget = { clientId, projectId };
-});
-
 // ------------------------------------------------------------- inspect run
+
+/**
+ * Ask where an import should be filed and turn the answer into ids, creating
+ * the client or project if that is what was asked for.
+ *
+ * Returns null if the import was cancelled — the caller reads nothing at all
+ * in that case.
+ */
+async function resolveDestination(fileCount) {
+  const choice = await chooseDestination({
+    library: state.library,
+    fileCount,
+    current: state.logTarget,
+  });
+  if (!choice) return null;
+
+  if (choice.action === 'none') {
+    state.logTarget = { clientId: '', projectId: '' };
+    return { clientId: '', projectId: '' };
+  }
+
+  if (choice.action === 'existing') {
+    state.logTarget = { clientId: choice.clientId, projectId: choice.projectId };
+    return state.logTarget;
+  }
+
+  let createdClientId = null;
+  try {
+    if (!choice.clientId) createdClientId = L.addClient(state.library, choice.clientName).id;
+    const clientId = choice.clientId ?? createdClientId;
+    const project = L.addProject(state.library, clientId, choice.projectName);
+    actions.markDirty();
+    state.logTarget = { clientId, projectId: project.id };
+    return state.logTarget;
+  } catch (err) {
+    // Adding the project can fail after the client was added — a name that is
+    // only whitespace passes the form's `required` check but not the store's.
+    // Take the half-made client back out rather than leaving an empty client
+    // behind from an import that never happened.
+    if (createdClientId) {
+      try {
+        L.deleteClient(state.library, createdClientId);
+      } catch {
+        // Nothing useful to do; the toast below is still the right message.
+      }
+    }
+    // A duplicate name or an empty one. Say so and let the import be retried
+    // rather than checking the files into nowhere without mentioning it.
+    toast(`That project could not be created: ${err.message}`, 'error');
+    return null;
+  }
+}
+
 
 async function runInspection(entries, sourceLabel) {
   const audio = entries.filter(({ file, path }) => looksLikeAudio(path ?? file.name));
@@ -342,6 +398,11 @@ async function runInspection(entries, sourceLabel) {
     );
     return;
   }
+
+  // Ask where these go before a single byte is read, so the answer is given
+  // while the import is still in mind — and so cancelling costs nothing.
+  const destination = await resolveDestination(audio.length);
+  if (!destination) return;
 
   const progress = $('#progress');
   const fill = $('#progress-fill');
@@ -385,7 +446,7 @@ async function runInspection(entries, sourceLabel) {
     .join('  ·  ');
 
   // Log into the chosen project, if any.
-  const { clientId, projectId } = state.logTarget;
+  const { clientId, projectId } = destination;
   if (clientId && projectId && state.library) {
     try {
       L.addLogEntries(state.library, clientId, projectId, reports);

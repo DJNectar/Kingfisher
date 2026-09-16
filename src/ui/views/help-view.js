@@ -169,14 +169,16 @@ export function renderHelp(host) {
       ]),
       el('h4', { text: 'Starting out' }),
       ol([
-        'Go to the Clients tab and click “Add client”.',
+        'Go to the Projects tab and click “Add client”.',
         'Open the client and click “Add project”.',
-        'From inside a project, click “Check files into this project” — that takes you to Inspect with the project already selected.',
+        'From inside a project, click “Check files into this project” — that takes you to Inspect with the project already chosen for you.',
       ]),
+      el('h4', { text: 'Filing an import' }),
+      el('p', { text: 'Every time you check files, Kingfisher asks where the results should go before it reads anything. Pick an existing project, start a new one — under an existing client or a brand new client, named right there in the same window — or choose “Don\u2019t log” to see the results without recording them. The question is asked at the moment of import because that is when you know the answer; a setting chosen earlier and forgotten is how checks end up filed nowhere.' }),
       el('h4', { text: 'The project log' }),
       el('p', { text: 'Every file you check into a project is added to that project\'s log with the date and time, the technical details, and any observations that came up. The log is a record, not a snapshot: checking the same file again adds a new entry rather than replacing the old one, so you can see how a delivery changed between versions. Click any row to open the full report exactly as it was at the time.' }),
       el('h4', { text: 'Renaming and deleting' }),
-      el('p', { text: 'Clients and projects can be renamed or deleted from their cards in the Clients tab. Deleting tells you exactly how much history goes with it before you confirm. Deleting from Kingfisher never touches your audio files — it only removes the record.' }),
+      el('p', { text: 'Clients and projects can be renamed or deleted from their cards in the Projects tab. Deleting tells you exactly how much history goes with it before you confirm. Deleting from Kingfisher never touches your audio files — it only removes the record.' }),
 
       // ------------------------------------------------------------------
       h3('todo', 'The to-do list'),

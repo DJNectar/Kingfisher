@@ -48,7 +48,7 @@ function renderRoster(host, ctx) {
   host.append(
     el('div', { class: 'section-head' }, [
       el('div', {}, [
-        el('h2', { text: 'Clients' }),
+        el('h2', { text: 'Projects by client' }),
         el('p', {
           class: 'muted',
           style: 'margin:0',

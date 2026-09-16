@@ -513,3 +513,57 @@ in any browser, whereas AAC is absent from open-source Chromium builds.
 - [x] UI: inspect, batch, client roster, project log, to-dos, help tab
 - [x] 65 unit tests + a full end-to-end browser run, all passing
 - [x] ARCHITECTURE.md, README.md, in-app help
+
+---
+
+## Session 6 — what the screen shows, and where an import gets filed
+
+### The exported report was fuller than the screen
+Running a real MP3 through the app turned up data present in the .txt and .pdf
+but absent from the web display. A programmatic diff — the text report against
+the live DOM with every `<details>` forced open — found the collapsing was only
+half of it. Five items were genuinely missing even when expanded:
+
+23. **"Fully read" was never shown.** `.parse-banner.ok { display: none }` meant
+    a file that read perfectly produced no statement at all. Silence is the one
+    thing a report must not say: it leaves the reader unable to tell a pass from
+    a check that never ran. The export states it plainly, so the screen does too.
+24. **Channel layout** (FL, FR, and where the layout came from) — absent.
+25. **Bit depth** showed "not applicable" without the reason.
+26. **Container form** — "bare frame stream" — absent.
+27. **File size** gave "10.3 MB" and never the exact byte count.
+
+Technical details now mirrors the exported FORMAT section row for row, and
+imports `codecText`/`bitDepthText` from the export renderer rather than
+re-phrasing them. Two wordings for one fact is a drift waiting to happen.
+
+Sections now open by default, with an Expand all / Collapse all toggle that
+remembers the choice.
+
+### Where does this import go?
+A dropdown beside the Check button only works if you notice it before you
+click. By the time the results are on screen the choice has been made for you,
+and the checks are logged nowhere. So the question is now asked at the moment
+of import, before a single byte is read:
+
+- an existing project, listed under the client it belongs to
+- a new project — under an existing client, or a brand new client named right
+  there in the same window
+- or "Don't log — just show me"
+
+`chooseDestination()` resolves to a plain descriptor and never touches the
+library itself; creating a client or project is a change to the document that
+has to be marked dirty and saved, and that belongs with the rest of the app's
+mutations rather than hidden inside a dialog. If the project cannot be created
+after the client was (a name that is only whitespace passes the form's
+`required` check but not the store's), the half-made client is taken back out
+rather than left behind by an import that never happened.
+
+The old `#log-project` select is gone — one place to set the destination rather
+than two that can disagree. The line under the Check buttons now just states
+where the next import will be filed.
+
+The **Clients** tab is now **Projects**, which is what people go there for; its
+roster heading reads "Projects by client", so the tab and the page agree.
+
+**45 browser assertions, all passing. 166 unit tests, all passing.**
