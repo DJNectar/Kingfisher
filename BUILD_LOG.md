@@ -566,6 +566,10 @@ after the client was (a name that is only whitespace passes the form's
 `required` check but not the store's), the half-made client is taken back out
 rather than left behind by an import that never happened.
 
+With no library open the window is skipped entirely: there is nothing to
+choose between, and a dialog that asks nothing is just a click in the way of
+every import. The line under the Check buttons says so instead.
+
 The old `#log-project` select is gone — one place to set the destination rather
 than two that can disagree. The line under the Check buttons now just states
 where the next import will be filed.

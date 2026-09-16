@@ -325,9 +325,11 @@ function renderLogTarget() {
       })()
     : null;
 
-  host.textContent = project
-    ? `Results will be logged to ${project.client.name} › ${project.project.name}. You are asked on every import, and can check a one-off without filing it.`
-    : 'You are asked where to file the results on every import. A one-off check needs no project.';
+  host.textContent = !state.library
+    ? 'No library open — results are shown but not recorded. Open or start a library to keep a history.'
+    : project
+      ? `Results will be logged to ${project.client.name} › ${project.project.name}. You are asked on every import, and can check a one-off without filing it.`
+      : 'You are asked where to file the results on every import. A one-off check needs no project.';
 }
 
 // ------------------------------------------------------------- inspect run
@@ -340,6 +342,10 @@ function renderLogTarget() {
  * in that case.
  */
 async function resolveDestination(fileCount) {
+  // With no library there is nothing to choose between, and a window that asks
+  // nothing is just a click in the way of every import.
+  if (!state.library) return { clientId: '', projectId: '' };
+
   const choice = await chooseDestination({
     library: state.library,
     fileCount,

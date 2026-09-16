@@ -18,7 +18,9 @@
  * marked dirty and saved, and that belongs with the rest of the app's
  * mutations rather than hidden inside a dialog.
  *
- * Resolves to null if the import is cancelled.
+ * Resolves to null if the import is cancelled. Only called when a library is
+ * open; with no library there is nothing to choose between, so the caller does
+ * not ask at all rather than showing a window with a single possible answer.
  */
 
 import { el, modal } from '../dom.js';
@@ -28,7 +30,7 @@ const NEW = '__new__';
 const NONE = '__none__';
 
 export function chooseDestination({ library, fileCount, current = {} }) {
-  const clients = library ? L.sortedClients(library) : [];
+  const clients = L.sortedClients(library);
 
   const noun = `${fileCount} file${fileCount === 1 ? '' : 's'}`;
 
@@ -98,12 +100,10 @@ export function chooseDestination({ library, fileCount, current = {} }) {
     el('p', {
       class: 'muted',
       style: 'margin-top:0',
-      text: library
-        ? `${noun} ready to check. Filing is optional — a one-off check needs no project. Filing under one keeps a dated record of what you checked and what it contained.`
-        : `${noun} ready to check. No library is open, so there is nowhere to file them — the results will be shown but not logged.`,
+      text: `${noun} ready to check. Filing is optional — a one-off check needs no project. Filing under one keeps a dated record of what you checked and what it contained.`,
     }),
-    library ? field('Log results to', target, 'dest-target') : null,
-    library ? newBlock : null,
+    field('Log results to', target, 'dest-target'),
+    newBlock,
   ]);
 
   return modal({
@@ -113,7 +113,7 @@ export function chooseDestination({ library, fileCount, current = {} }) {
     cancelLabel: 'Cancel import',
   }).then((ok) => {
     if (!ok) return null;
-    if (!library || target.value === NONE) return { action: 'none' };
+    if (target.value === NONE) return { action: 'none' };
     if (target.value !== NEW) {
       const [clientId, projectId] = target.value.split('|');
       return { action: 'existing', clientId, projectId };
