@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "serve": "python3 -m http.server 8181",
-    "test:browser": "node test/browser/make-fixtures.mjs && node test/browser/e2e.mjs"
+    "test:browser": "node test/browser/make-fixtures.mjs && node test/browser/e2e.mjs",
+    "test:fsa": "node test/browser/fsa.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0"

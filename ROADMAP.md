@@ -15,7 +15,7 @@ work history, and exports in four formats.
 | Branch | `claude/audio-qc-utility-mac-rzyyi7` |
 | Pull request | [#1](https://github.com/DJNectar/Kingfisher/pull/1) — open, mergeable, CI green |
 | `main` | still the original README; **nothing is merged yet** |
-| Unit tests | 162, all passing (GitHub Actions runs them on every push) |
+| Unit tests | 166, all passing (GitHub Actions runs them on every push) |
 | Browser tests | 37 assertions, all passing |
 
 ### What it does
@@ -49,15 +49,25 @@ answer "which of these did we flag?" without opening each report.
 Nothing-found is written as an EMPTY cell and an empty column, never as a word
 like "clean" — a reassuring label would read as a verdict the app does not make.
 
-### 1. Verify the Chrome save-in-place path on a real Mac — *needs you*
+### 1. Confirm the library reopens after a restart — *needs you, and only this part*
 
-The only significant path never tested end to end. It cannot be driven from a
-test environment, because the File System Access API opens a native dialog no
-automation can click.
+**Most of this is now covered automatically.** `npm run test:fsa` drives the
+Chrome save path with a stand-in file handle and proves the part that matters:
+the library is written *through the handle*, **no download is produced**, a
+second save updates the same file rather than making another, and the contents
+are current.
 
-Five minutes: **Save as…** to a real folder → quit Chrome entirely → reopen the
-app → you should be offered **"Reopen &lt;filename&gt;"**. Then confirm **Save**
-updates that file in place rather than dropping a copy in Downloads.
+Two things still need a real browser:
+
+1. **The native save dialog** — no automation can click it, by design.
+2. **Remembering the library across a restart.** The handle is stored in
+   IndexedDB, which saves values by structured clone, and a stand-in object
+   with methods is not structured-cloneable (`DataCloneError`). A real
+   `FileSystemFileHandle` is a platform object with clone support built in; a
+   fake one cannot be. So this specific path is untestable without a human.
+
+Two minutes: **Save as…** to a real folder → quit Chrome entirely → reopen the
+app → you should be offered **"Reopen &lt;filename&gt;"**.
 
 Putting the library in Dropbox and repeating this also tests the sync story.
 
@@ -130,8 +140,9 @@ then open <http://localhost:8181> in Chrome. Or double-click `start.command`.
 Tests:
 
 ```bash
-npm test              # 162 unit tests, no dependencies needed
-npm run test:browser  # 37 browser assertions (needs: npm install)
+npm test              # 166 unit tests, no dependencies needed
+npm run test:browser  # full UI walkthrough (needs: npm install)
+npm run test:fsa      # Chrome save-in-place path, with a stand-in file handle
 ```
 
 See `README.md` for what it reads, `ARCHITECTURE.md` for why it is built this
