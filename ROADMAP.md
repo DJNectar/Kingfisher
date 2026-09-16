@@ -39,20 +39,17 @@ work history, and exports in four formats.
 
 ## To do
 
-### 1. Finish wiring provenance through the rest of the app — *known gap*
+### ~~1. Finish wiring provenance through the rest of the app~~ — **done**
 
-The AI-origin flag shows in the single-file view, but it does **not** reach:
+The origin flag now reaches the CSV export (six columns: flag, confidence,
+headline, reasons, Content Credentials, tools named), the project log table
+(an **Origin** column), and the log entry summary, so a reopened library can
+answer "which of these did we flag?" without opening each report.
 
-- **CSV export** — a batch of files exported to a spreadsheet loses the flag
-  entirely, which is exactly where you would want to sort by it.
-- **The project log** — a file checked into a project records its levels and
-  observations, but not its provenance finding, so the history cannot answer
-  "which of these did we flag?" later.
+Nothing-found is written as an EMPTY cell and an empty column, never as a word
+like "clean" — a reassuring label would read as a verdict the app does not make.
 
-This is incomplete work rather than a new feature: the capability exists and
-simply is not plumbed to the batch and history views. Roughly an hour.
-
-### 2. Verify the Chrome save-in-place path on a real Mac — *needs you*
+### 1. Verify the Chrome save-in-place path on a real Mac — *needs you*
 
 The only significant path never tested end to end. It cannot be driven from a
 test environment, because the File System Access API opens a native dialog no
@@ -64,7 +61,7 @@ updates that file in place rather than dropping a copy in Downloads.
 
 Putting the library in Dropbox and repeating this also tests the sync story.
 
-### 3. Run it against your own client files — *needs you*
+### 2. Run it against your own client files — *needs you*
 
 The highest-value testing left. Every file the parsers were built against was
 either synthetic or one of the three you sent — and those three found four real
@@ -75,14 +72,14 @@ Worth watching for:
 - a file that reads "could not be read" but opens fine elsewhere
 - metadata you know is present that does not appear
 
-### 4. Verify AAC decoding in your browser — *needs you*
+### 3. Verify AAC decoding in your browser — *needs you*
 
 "Measure levels" is verified working for MP3 and FLAC. **AAC could not be
 tested here**: it is patent-encumbered, so open-source Chromium omits it while
 Chrome and Safari ship it. Load an `.m4a`, click **Measure levels**, and confirm
 you get a peak rather than an error.
 
-### 5. Decide whether to merge PR #1
+### 4. Decide whether to merge PR #1
 
 Nothing blocks it: CI green, no conflicts, no review comments. `main` currently
 holds only the original README, so merging is what makes the app the project's
@@ -98,6 +95,7 @@ actual content.
 | **True-peak (inter-sample) detection** | Needs oversampling. Current peak is sample-peak and is labelled as such rather than implying more. |
 | **RIFX (big-endian RIFF)** | Detected and explicitly refused rather than misread. No reference file existed to verify against, and shipping unverified byte-order handling is how wrong numbers appear. |
 | **WMA, WavPack, Monkey's Audio, DSD** | Not common on a Mac music or post desk. The registry makes each a self-contained addition. |
+| **Sony Wave64 (`.w64`) and raw ADTS AAC (`.aac`)** | Both extensions are listed in the file picker but have no parser, so such a file is offered and then reported as unreadable. It fails cleanly with no invented values, so it is a cosmetic honesty issue rather than a correctness one. Left as-is by decision. |
 | **C2PA signature verification** | Needs cryptography, a certificate chain and a trust list. The app locates manifests and says plainly that it has not verified them. |
 | **Watermark detection (SynthID and similar)** | Not possible here at all. Watermarks live in the audio signal, not the metadata, and detecting one needs the issuing vendor's own software. |
 

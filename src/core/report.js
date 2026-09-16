@@ -198,8 +198,25 @@ export function summarizeReport(report) {
     layoutName: report.format.layoutName,
     durationSeconds: report.duration.seconds,
     peakDbfs: report.audio?.peakDbfs ?? null,
+    /** Where the levels came from, since a decoded reading is not the same as a read one. */
+    levelSource: report.audio?.measured ? report.audio.source : null,
     parseStatus: report.parse.status,
     observationCount: report.observations.length,
+
+    /*
+     * The origin finding, carried in the summary rather than only inside the
+     * stored report. List views and the history CSV read the summary, so
+     * without this a logged check silently loses its provenance flag even
+     * though the full report still holds it — and "which of these did we
+     * flag?" is exactly the question a history is for.
+     *
+     * Read directly off the assessment rather than importing the provenance
+     * module, to keep this model free of dependencies on the analysis.
+     */
+    originFlag: report.provenance?.assessment?.flag ?? null,
+    originConfidence: report.provenance?.assessment?.confidence ?? null,
+    originHeadline: report.provenance?.assessment?.headline ?? null,
+    hasContentCredentials: report.provenance?.c2pa?.present ?? false,
   };
 }
 

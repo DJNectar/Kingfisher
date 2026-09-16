@@ -266,7 +266,7 @@ function renderProject(host, ctx) {
     logPanel.append(el('p', { class: 'muted', text: 'Every check ever made, newest last. Re-checking a file adds a new entry rather than replacing the old one, so the record shows how the work went over time. Click a row to see the full report.' }));
     logPanel.append(
       table(
-        ['When', 'File', { label: 'Rate', class: 'num' }, { label: 'Depth', class: 'num' }, { label: 'Ch', class: 'num' }, { label: 'Duration', class: 'num' }, { label: 'Peak', class: 'num' }, 'Observations'],
+        ['When', 'File', { label: 'Rate', class: 'num' }, { label: 'Depth', class: 'num' }, { label: 'Ch', class: 'num' }, { label: 'Duration', class: 'num' }, { label: 'Peak', class: 'num' }, 'Origin', 'Observations'],
         [...project.log].reverse().map((entry) => {
           const s = entry.summary ?? {};
           const notable = (entry.observations ?? []).filter((o) => o.severity !== 'info');
@@ -278,6 +278,10 @@ function renderProject(host, ctx) {
             s.channels ?? UNKNOWN,
             s.durationSeconds != null ? formatDuration(s.durationSeconds) : UNKNOWN,
             s.peakDbfs != null ? formatDbfs(s.peakDbfs, 1) : UNKNOWN,
+            // The origin finding, so the history can answer "which of these did
+            // we flag?" without opening each report. Deliberately blank rather
+            // than reassuring when nothing was found.
+            originCell(s),
             notable.length
               ? el('span', {
                 class: `badge badge-${notable[0].severity}`,
@@ -296,6 +300,26 @@ function renderProject(host, ctx) {
     );
   }
   host.append(logPanel);
+}
+
+/**
+ * The Origin column for one log row.
+ *
+ * Nothing-found renders as an empty cell, not as a word. A spreadsheet or a
+ * table full of "clean" would read as a verdict the app does not make, whereas
+ * a blank reads as what it is: nothing was recorded.
+ */
+function originCell(summary) {
+  if (summary.hasContentCredentials && summary.originFlag !== 'declared') {
+    return el('span', { class: 'badge badge-info', text: 'Credentials' });
+  }
+  if (summary.originFlag === 'declared') {
+    return el('span', { class: 'badge badge-attention', text: 'declares AI' });
+  }
+  if (summary.originFlag === 'possible') {
+    return el('span', { class: 'badge badge-notice', text: 'possible AI' });
+  }
+  return el('span', { class: 'muted', text: '' });
 }
 
 function renderTodos(ctx, client, project) {

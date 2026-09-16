@@ -61,6 +61,25 @@ const COLUMNS = [
   ['Encoded peak (dBFS)', (r) => dbfs(r.metadata.lame?.peakDbfs)],
   ['Audio MD5', (r) => r.metadata.flac?.md5],
 
+  // Origin findings. Appended after the existing set, per the stable-columns
+  // rule at the top of this file.
+  ['Origin flag', (r) => originFlagLabel(r.provenance?.assessment?.flag)],
+  ['Origin confidence', (r) => r.provenance?.assessment?.confidence],
+  ['Origin headline', (r) => r.provenance?.assessment?.headline],
+  ['Origin reasons', (r) => r.provenance?.assessment?.reasons?.map((x) => x.text).join(' | ')],
+  ['Content Credentials', (r) => (r.provenance?.c2pa?.present ? 'present (signature not checked)' : null)],
+  ['Tools named', (r) => {
+    const tools = r.provenance?.toolMatches ?? [];
+    return tools.length ? [...new Set(tools.map((t) => t.tool))].join('; ') : null;
+  }],
+  // Named "source" rather than reusing "Levels measured from", which already
+  // exists above and carries the coverage percentage. Two columns with the
+  // same heading would be ambiguous in a spreadsheet and would break the
+  // by-name lookup in the history fallback below.
+  ['Level measurement source', (r) => (r.audio?.measured
+    ? (r.audio.source === 'decoded' ? `decoded (${r.audio.decodedBy ?? 'browser'})` : "the file's own samples")
+    : null)],
+
   ['Observations', (r) => r.observations.length],
   ['Needs a look', (r) => r.observations.filter((o) => o.severity === 'attention').map((o) => o.title).join(' | ')],
   ['Worth noting', (r) => r.observations.filter((o) => o.severity === 'notice').map((o) => o.title).join(' | ')],
@@ -84,12 +103,26 @@ export function historyToCsv(rowsIn) {
     } else {
       // Older entries may carry only a summary; write what exists, blank the rest.
       const s = entry.summary ?? {};
+      // Fill by column name rather than by index: the positions shift whenever
+      // a column is appended, and a hard-coded index silently writes a value
+      // into the wrong column when that happens.
       const partial = new Array(COLUMNS.length).fill('');
-      partial[0] = s.fileName ?? '';
-      partial[5] = s.sampleRate ?? '';
-      partial[6] = s.bitDepth ?? '';
-      partial[8] = s.channels ?? '';
-      partial[11] = round(s.durationSeconds, 6) ?? '';
+      const put = (name, value) => {
+        const i = COLUMNS.findIndex(([label]) => label === name);
+        if (i >= 0 && value !== null && value !== undefined) partial[i] = value;
+      };
+      put('File', s.fileName);
+      put('Sample rate (Hz)', s.sampleRate);
+      put('Bit depth', s.bitDepth);
+      put('Channels', s.channels);
+      put('Duration (s)', round(s.durationSeconds, 6));
+      put('Duration (h:mm:ss)', clock(s.durationSeconds));
+      put('Codec', s.codec);
+      put('Peak (dBFS)', dbfs(s.peakDbfs));
+      put('Origin flag', originFlagLabel(s.originFlag));
+      put('Origin confidence', s.originConfidence);
+      put('Origin headline', s.originHeadline);
+      put('Content Credentials', s.hasContentCredentials ? 'present (signature not checked)' : null);
       rows.push([client.name, project.name, entry.timestamp, ...partial]);
     }
   }
@@ -103,6 +136,17 @@ function safe(get, r) {
   } catch {
     return '';
   }
+}
+
+/**
+ * Readable form of the origin flag. Blank for "none", because an empty cell in
+ * a spreadsheet reads as "nothing found" — whereas a word like "clean" would
+ * read as a verdict the app does not make.
+ */
+function originFlagLabel(flag) {
+  if (!flag || flag === 'none') return null;
+  if (flag === 'declared') return 'declares AI generation';
+  return 'possible AI generation';
 }
 
 function readResult(r) {
