@@ -11,6 +11,9 @@
 import { el, kv, section, table, toast } from '../dom.js';
 import { decodeAvailability } from '../../core/audio/decode.js';
 import { PARSE_STATUS } from '../../core/report.js';
+// Imported rather than reimplemented, so the wording on screen is identical to
+// the wording in the exported report.
+import { codecText, bitDepthText } from '../../export/render.js';
 import { SEVERITY_LABELS } from '../../core/qc/severity.js';
 import {
   formatBytes,
@@ -48,11 +51,24 @@ export function renderReportCard(report, {
           ].filter(Boolean).join('  ·  '),
         }),
       ]),
-      badges,
+      el('div', { class: 'report-head-right' }, [
+        badges,
+        expandToggle(() => card),
+      ]),
     ]),
   );
 
   const body = el('div', { class: 'report-body' });
+
+  /**
+   * Whether detail sections start open.
+   *
+   * Collapsing keeps a long batch scannable, but it also means the screen can
+   * look like it holds less than the exported report does — which is confusing
+   * when the two are meant to be the same thing. So the choice is the user's,
+   * and it is remembered.
+   */
+  const expandAll = readExpandPreference(collapsedByDefault);
 
   // ---- 1. read result
   body.append(parseBanner(report));
@@ -65,9 +81,9 @@ export function renderReportCard(report, {
     body.append(observationList(report.observations));
 
     // ---- 4. detail
-    if (report.audio?.measured) body.append(levelsSection(report, collapsedByDefault));
+    if (report.audio?.measured) body.append(levelsSection(report, !expandAll));
     else body.append(measureOffer(report, onMeasureLevels));
-    const meta = metadataSections(report, collapsedByDefault);
+    const meta = metadataSections(report, !expandAll);
     for (const s of meta) body.append(s);
     body.append(chunkSection(report));
   } else {
@@ -75,10 +91,79 @@ export function renderReportCard(report, {
     if (report.chunks.length) body.append(chunkSection(report));
   }
 
+  // Apply the remembered preference to every section, including the ones whose
+  // own default differs, so the control means what it says.
+  if (expandAll) {
+    for (const details of body.querySelectorAll('details.detail-section')) details.open = true;
+  }
   card.append(body);
 
   if (onExport) card.append(exportBar(onExport));
   return card;
+}
+
+const EXPAND_KEY = 'kingfisher.expandSections';
+
+/**
+ * Read the remembered expand preference.
+ *
+ * localStorage can be unavailable or throw (a private window, blocked site
+ * data), so a failure falls back to the caller's default rather than breaking
+ * the render.
+ */
+function readExpandPreference(collapsedByDefault) {
+  try {
+    const stored = localStorage.getItem(EXPAND_KEY);
+    if (stored === 'all') return true;
+    if (stored === 'none') return false;
+  } catch {
+    // Fall through to the default.
+  }
+  return !collapsedByDefault;
+}
+
+function writeExpandPreference(expand) {
+  try {
+    localStorage.setItem(EXPAND_KEY, expand ? 'all' : 'none');
+  } catch {
+    // A remembered preference is a convenience, not a requirement.
+  }
+}
+
+/**
+ * Expand or collapse every detail section on this report, and remember which
+ * the user chose so the next file opens the same way.
+ */
+function expandToggle(getCard) {
+  const button = el('button', { class: 'btn btn-small btn-ghost', text: 'Expand all' });
+
+  const sync = () => {
+    const card = getCard();
+    const sections = [...card.querySelectorAll('details.detail-section')];
+    const anyClosed = sections.some((d) => !d.open);
+    button.textContent = anyClosed ? 'Expand all' : 'Collapse all';
+  };
+
+  button.addEventListener('click', () => {
+    const card = getCard();
+    const sections = [...card.querySelectorAll('details.detail-section')];
+    const expand = sections.some((d) => !d.open);
+    for (const d of sections) d.open = expand;
+    writeExpandPreference(expand);
+    sync();
+  });
+
+  // Reflect the state the card actually rendered in, and keep up if the user
+  // opens or closes a section by hand.
+  setTimeout(() => {
+    sync();
+    const card = getCard();
+    for (const d of card.querySelectorAll('details.detail-section')) {
+      d.addEventListener('toggle', sync);
+    }
+  }, 0);
+
+  return button;
 }
 
 function severityBadges(report) {
@@ -107,8 +192,15 @@ function parseBanner(report) {
   const banner = el('div', { class: `parse-banner ${status}` });
 
   if (status === PARSE_STATUS.OK) {
-    // Warnings can exist even on a fully-read file; show them if so.
-    if (!report.parse.warnings.length) return banner; // .ok is display:none
+    if (!report.parse.warnings.length) {
+      // Say so rather than showing nothing. A silent pass leaves the reader
+      // unsure whether the file was checked or the check was skipped — and the
+      // exported report states it plainly, so the screen should too.
+      banner.className = 'parse-banner ok-shown';
+      banner.append(el('h4', { text: 'Fully read' }));
+      banner.append(el('p', { style: 'margin:0', text: 'Every part of this file was understood.' }));
+      return banner;
+    }
     banner.className = 'parse-banner partial';
     banner.append(el('h4', { text: 'Read in full, with notes' }));
   } else if (status === PARSE_STATUS.PARTIAL) {
@@ -306,19 +398,33 @@ function metadataSections(report, collapsed) {
 
   // A "technical details" section carrying the fields that do not fit the
   // headline tiles, so nothing the parser established is hidden.
+  // Mirrors the FORMAT section of the exported report. The headline tiles show
+  // the six numbers at a glance; this is the full set, so nothing that reaches
+  // the PDF is absent from the screen.
   const technical = [
-    ['Container', report.container.kind],
-    ['Codec', f.codec],
+    ['File size', formatBytes(report.file.size)],
+    ['Container', [report.container.kind, report.container.form].filter(Boolean).join(' / ')],
+    ['Codec', codecText(f)],
     ['Profile', f.profile],
     ['Lossless', f.lossless === null ? null : f.lossless ? 'yes' : 'no'],
-    ['Bitrate', f.bitrate ? `${Math.round(f.bitrate / 1000)} kbps (calculated from the audio data)` : null],
-    ['Bitrate mode', f.bitrateMode],
+    ['Sample rate', formatSampleRate(f.sampleRate)],
+    ['Bit depth', bitDepthText(f)],
+    ['Valid bits', f.validBits && f.validBits !== f.bitDepth ? `${f.validBits} of ${f.bitDepth}` : null],
+    ['Channels', formatChannels(f.channels, f.layoutName)],
+    ['Channel layout', f.layoutChannels?.length
+      ? `${f.layoutChannels.join(', ')}${f.layoutSource ? ` (${f.layoutSource}${f.channelMaskHex ? ` ${f.channelMaskHex}` : ''})` : ''}`
+      : null],
+    ['Bitrate', f.bitrate ? `${Math.round(f.bitrate / 1000)} kbps${f.bitrateMode ? `, ${f.bitrateMode}` : ''} (calculated from the audio data)` : null],
     ['Encoder', f.encoder],
     ['Block align', f.blockAlign ? `${f.blockAlign} bytes` : null],
     ['Byte rate', f.byteRate ? `${f.byteRate.toLocaleString('en-US')} bytes/s` : null],
     ['Byte order', f.sampleEndianness === 'big' ? 'big-endian' : f.sampleEndianness === 'little' ? 'little-endian' : null],
+    ['Duration', report.duration.seconds !== null
+      ? `${formatDuration(report.duration.seconds)}${report.duration.frames ? ` (${report.duration.frames.toLocaleString('en-US')} sample frames)` : ''}`
+      : null],
     ['Duration source', report.duration.source],
-  ].filter(([, v]) => v !== null && v !== undefined);
+    ['Duration exact', report.duration.exact === false ? 'no — approximate' : report.duration.exact === true ? 'yes' : null],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
 
   if (technical.length) out.push(section('Technical details', kv(technical), { open: false }));
 
