@@ -24,15 +24,28 @@ Three things it will never do:
     your call, not the app's.
 
 
-STARTING IT
+WHAT YOU NEED
 ------------------------------------------------------------------
+
+A Mac, and Chrome. That's it.
+
+Safari works too, with one limitation noted further down. There is
+nothing to install, no account to make, and no settings to configure.
+
+
+INSTALLING IT
+------------------------------------------------------------------
+
+There is no installer, because there is nothing to install. The
+folder IS the app. Put it somewhere and run it.
 
 1. Unzip the folder somewhere you'll find it again — Documents,
    Applications, Desktop, wherever suits.
 
 2. Open the folder and double-click:  start.command
 
-3. A black Terminal window opens and Chrome opens to the app.
+3. A black Terminal window opens and Chrome opens to the app. That's
+   it — you're running.
 
 Leave that Terminal window open the whole time you're using
 Kingfisher. It is the app. Closing it stops the app. When you're
@@ -41,7 +54,7 @@ finished, close the window or press Control-C in it.
 To use it again later, double-click start.command again.
 
 
-IF IT WON'T START
+IF IT WON'T START THE FIRST TIME
 ------------------------------------------------------------------
 
 macOS is suspicious of anything downloaded from the internet, so the
