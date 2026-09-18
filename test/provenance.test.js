@@ -13,6 +13,7 @@ import { inspectSource } from '../src/core/registry.js';
 import { analyseProvenance, provenanceSummary } from '../src/core/provenance/provenance.js';
 import { detectC2pa, isC2paUuid } from '../src/core/provenance/c2pa.js';
 import { renderFileReport } from '../src/export/render.js';
+import { createReport } from '../src/core/report.js';
 import * as F from './helpers/wav-fixtures.js';
 
 const inspect = (bytes, info = {}) =>
@@ -500,3 +501,67 @@ function parseCsvRow(row) {
   out.push(cur);
   return out;
 }
+
+// ------------------- judged on what the field says, not only which field
+
+/**
+ * From a real Suno export. The comment field read:
+ *
+ *   made with suno; created=2026-04-20T22:19:02Z; id=808f7fb4-5aaa-...
+ *
+ * An earlier version scored this "weak — free text, so it may be describing
+ * the audio rather than recording what made it", and filed the clearest
+ * evidence in the file under "worth noting". Nobody describing a track writes
+ * a UUID.
+ */
+const SUNO_WAV_COMMENT = 'made with suno; created=2026-04-20T22:19:02Z; id=808f7fb4-5aaa-490e-9c2c-fd2d4b446a57';
+
+function withComment(text) {
+  const report = createReport({ name: 'take.wav', path: 'take.wav', size: 100 });
+  report.parse.status = 'ok';
+  report.parse.parser = 'wav';
+  report.metadata.info = { ICMT: { value: text } };
+  return analyseProvenance(report).assessment;
+}
+
+test('provenance: a machine-written provenance record reads as strong', () => {
+  const assessment = withComment(SUNO_WAV_COMMENT);
+  assert.equal(assessment.confidence, 'strong');
+  assert.match(assessment.headline, /Strong signs/);
+  const detail = assessment.reasons.map((r) => r.detail).join(' ');
+  assert.match(detail, /made with Suno/i);
+  assert.match(detail, /timestamp/i);
+  assert.match(detail, /generation id/i);
+});
+
+test('provenance: claiming authorship alone is worth more than a bare mention', () => {
+  assert.equal(withComment('made with suno').confidence, 'moderate');
+  assert.equal(withComment('suno').confidence, 'weak');
+});
+
+test('provenance: machine-written marks alone are worth more than a bare mention', () => {
+  assert.equal(
+    withComment('suno; created=2026-04-20T22:19:02Z; id=808f7fb4-5aaa-490e-9c2c-fd2d4b446a57').confidence,
+    'moderate',
+  );
+});
+
+test('provenance: someone DESCRIBING a track is still only a faint sign', () => {
+  // The caveat the old code applied to everything is correct here, and must
+  // survive: this really might be a person talking about what it sounds like.
+  const assessment = withComment('sounds a bit like suno to me');
+  assert.equal(assessment.confidence, 'weak');
+  assert.match(
+    assessment.reasons[0].detail,
+    /describing the audio/i,
+    'a bare mention must keep its "might just be a description" caveat',
+  );
+});
+
+test('provenance: an ISO timestamp is seen despite its uppercase T', () => {
+  // Phrase matching lowercases the text, which turns the "T" between date and
+  // time into "t" and stopped the timestamp being recognised at all.
+  const detail = withComment('made with suno; created=2026-04-20T22:19:02Z')
+    .reasons.map((r) => r.detail).join(' ');
+  assert.match(detail, /timestamp/i);
+});

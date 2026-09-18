@@ -26,6 +26,8 @@ import {
   TOOL_SIGNATURES,
   ORIGIN_FIELDS,
   GENERATIVE_PHRASES,
+  AUTHORSHIP_PHRASES,
+  MACHINE_WRITTEN_MARKS,
   DEDICATED_TOOL_FIELDS,
   TOOL_KINDS,
 } from './signatures.js';
@@ -136,6 +138,71 @@ export function analyseProvenance(report) {
  *  3. There is no clean outcome. Nothing found is reported as nothing found,
  *     and the reasons list says why that carries no information.
  */
+/**
+ * How much a named tool is worth, judged on what the field SAYS rather than
+ * only on which field it is.
+ *
+ * The first version scored this by field alone: a dedicated software field was
+ * moderate, anything else was weak free text that "may be describing the audio
+ * rather than recording what made it". That reading was defensible for a
+ * comment reading "sounds like Suno". It was badly wrong for a real file whose
+ * comment read:
+ *
+ *   made with suno; created=2026-04-20T22:19:02Z; id=808f7fb4-5aaa-...
+ *
+ * Nobody describing a track writes a UUID. That is a provenance record that
+ * happened to be written into a comment field, and calling it a possible
+ * coincidence buried the clearest evidence in the file under "worth noting".
+ *
+ * So two things are now read out of the surrounding text:
+ *   an authorship phrase  — "made with X" is an attribution, not a description
+ *   machine-written marks — an ISO timestamp or a UUID beside the tool name
+ *
+ * Either one lifts it to moderate. Both together make it strong, because a
+ * field that both claims authorship and carries a generation id is doing
+ * exactly one job.
+ */
+function toolReason(tool) {
+  const dedicated = DEDICATED_TOOL_FIELDS.has(tool.field);
+  const raw = String(tool.value ?? '');
+  // Phrases are matched case-insensitively; the marks are matched against the
+  // ORIGINAL text, because case carries meaning in them — the "T" separating
+  // date from time in an ISO timestamp is part of the format, and lowercasing
+  // it first is what stopped the timestamp in the file that prompted this from
+  // being seen at all.
+  const context = raw.toLowerCase();
+
+  const authorship = AUTHORSHIP_PHRASES.find((phrase) => context.includes(`${phrase} ${tool.tool.toLowerCase()}`));
+  const marks = MACHINE_WRITTEN_MARKS.filter((m) => m.pattern.test(raw));
+
+  if (!dedicated && !authorship && !marks.length) {
+    return {
+      weight: 'weak',
+      text: `Its "${tool.field}" field names ${tool.tool}, ${tool.kind}.`,
+      detail: 'This is free-text, so it may be describing the audio rather than recording what made it.',
+    };
+  }
+
+  const strong = Boolean(authorship) && marks.length > 0;
+  const detail = [];
+  if (authorship) detail.push(`It says "${authorship} ${tool.tool}", which is a claim about what made the file rather than a description of it.`);
+  else if (dedicated) detail.push('That field is where software records what wrote the file.');
+  if (marks.length) {
+    detail.push(`The same field carries ${joinList(marks.map((m) => m.label))}, so it was written by software rather than typed by hand.`);
+  }
+
+  return {
+    weight: strong ? 'strong' : 'moderate',
+    text: `Its "${tool.field}" field names ${tool.tool}, ${tool.kind}.`,
+    detail: detail.join(' '),
+  };
+}
+
+function joinList(items) {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+}
+
 function assess({ c2pa, matches, phraseHits }) {
   const reasons = [];
 
@@ -174,14 +241,7 @@ function assess({ c2pa, matches, phraseHits }) {
   for (const tool of generativeTools) {
     if (seenTools.has(tool.tool)) continue;
     seenTools.add(tool.tool);
-    const dedicated = DEDICATED_TOOL_FIELDS.has(tool.field);
-    reasons.push({
-      weight: dedicated ? 'moderate' : 'weak',
-      text: `Its "${tool.field}" field names ${tool.tool}, ${tool.kind}.`,
-      detail: dedicated
-        ? 'That field is where software records what wrote the file.'
-        : 'This is free-text, so it may be describing the audio rather than recording what made it.',
-    });
+    reasons.push(toolReason(tool));
   }
 
   // --- generative phrases in free text
