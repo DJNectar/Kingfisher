@@ -174,3 +174,70 @@ export function chromaticCluster(seconds = 30, sampleRate = 44100) {
   }
   return buffer;
 }
+
+// ------------------------------------------------ real-world degradation
+
+/**
+ * Shift audio by a whole number of semitones by resampling it.
+ *
+ * This is the one test of key detection that needs no ground truth. Whatever
+ * key a piece is in, shifting it up three semitones puts it three semitones
+ * higher — so a detector that tracks pitch must move its answer by exactly
+ * three, and one that does not is broken, regardless of whether its original
+ * answer was right.
+ *
+ * Resampling shifts tempo along with pitch, which does not matter here: key
+ * analysis has no opinion about how fast the music is going.
+ */
+export function transpose(buffer, semitones, sampleRate = 44100) {
+  const ratio = 2 ** (semitones / 12);
+  const length = Math.floor(buffer.length / ratio);
+  const out = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    const at = i * ratio;
+    const k = Math.floor(at);
+    const frac = at - k;
+    const a = buffer[k] ?? 0;
+    const b = buffer[k + 1] ?? a;
+    out[i] = a + (b - a) * frac;
+  }
+  return out;
+}
+
+/** Mix two signals, the second at the given level. */
+export function mix(a, b, level = 1) {
+  const out = new Float32Array(Math.max(a.length, b.length));
+  for (let i = 0; i < out.length; i++) out[i] = (a[i] ?? 0) + (b[i] ?? 0) * level;
+  return out;
+}
+
+/** Broadband noise, as a room or a hiss floor would add. */
+export function noiseFloor(length, level = 0.05) {
+  const out = new Float32Array(length);
+  let state = 0x6d2b79f5;
+  for (let i = 0; i < length; i++) {
+    state = (state + 0x9e3779b9) | 0;
+    let z = state;
+    z = Math.imul(z ^ (z >>> 16), 0x21f0aaad);
+    z = Math.imul(z ^ (z >>> 15), 0x735a2d97);
+    out[i] = (((z ^ (z >>> 15)) >>> 0) / 4294967296 * 2 - 1) * level;
+  }
+  return out;
+}
+
+/** Drive into clipping, as a loud master does. */
+export function clip(buffer, drive = 4) {
+  const out = new Float32Array(buffer.length);
+  for (let i = 0; i < buffer.length; i++) out[i] = Math.max(-1, Math.min(1, buffer[i] * drive));
+  return out;
+}
+
+/** A crude reverb: a few decaying delays, enough to smear the spectrum. */
+export function smear(buffer, sampleRate = 44100) {
+  const out = Float32Array.from(buffer);
+  for (const [ms, gain] of [[37, 0.4], [71, 0.3], [113, 0.22], [173, 0.15]]) {
+    const delay = Math.round((ms / 1000) * sampleRate);
+    for (let i = delay; i < out.length; i++) out[i] += buffer[i - delay] * gain;
+  }
+  return out;
+}

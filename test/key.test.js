@@ -168,3 +168,81 @@ function averageOf(audio) {
   for (let p = 0; p < 12; p++) total[p] /= sum;
   return total;
 }
+
+// ------------------------------------------ verification without ground truth
+
+/**
+ * The transposition test.
+ *
+ * This is the one check on key detection that needs no correct answer. Whatever
+ * key a piece is in, shifting it up three semitones puts it three semitones
+ * higher — so a detector that tracks pitch must move its answer by exactly
+ * three. One that does not is broken, regardless of whether its first answer
+ * happened to be right.
+ *
+ * It is the closest thing key detection has to a click track, and it is what
+ * makes the difference between "8 of 8 on material I wrote" and evidence.
+ */
+test('key: the answer follows a transposition through all twelve semitones', () => {
+  for (const [label, audio] of [
+    ['C major', K.cMajor()],
+    ['A minor', K.aMinor()],
+    ['G Mixolydian', K.gMixolydian()],
+  ]) {
+    const base = at(audio);
+    assert.ok(base.established, `${label} gave no key to start from`);
+
+    for (let semitones = 1; semitones < 12; semitones++) {
+      const shifted = at(K.transpose(audio, semitones));
+      assert.ok(shifted.established, `${label} shifted by ${semitones} lost its key`);
+      assert.equal(
+        shifted.tonic,
+        (base.tonic + semitones) % 12,
+        `${label} shifted by ${semitones} moved to ${shifted.name}, not ${semitones} semitones up`,
+      );
+      assert.equal(shifted.mode, base.mode, `${label} shifted by ${semitones} changed mode`);
+    }
+  }
+});
+
+/**
+ * The mess test.
+ *
+ * Synthetic music is far cleaner than a record: one instrument, no percussion,
+ * no production. These take material whose key IS known and wreck it, which
+ * tests the gap between the fixtures and reality without needing a reference
+ * library to do it.
+ */
+test('key: a known key survives drums, noise and clipping', () => {
+  const music = K.cMajor();
+  const drums = K.drumLoop(music.length / RATE);
+
+  const cases = [
+    ['drums underneath', K.mix(music, drums, 0.4)],
+    ['drums as loud as the music', K.mix(music, drums, 1.2)],
+    ['a noise floor', K.mix(music, K.noiseFloor(music.length, 0.06))],
+    ['heavy noise', K.mix(music, K.noiseFloor(music.length, 0.2))],
+    ['driven into clipping', K.clip(music, 6)],
+    ['all of it at once', K.clip(K.mix(K.mix(music, drums, 0.8), K.noiseFloor(music.length, 0.08)), 3)],
+  ];
+
+  for (const [label, audio] of cases) {
+    const result = at(audio);
+    assert.ok(result.established, `${label}: lost the key entirely`);
+    assert.equal(result.name, 'C major', `${label}: read as ${result.name}`);
+  }
+});
+
+test('key: reverb costs the centre but never the note collection', () => {
+  // Measured: a heavy reverb smear is the one degradation that flips the top
+  // answer, from C major to G Mixolydian. Both use the same seven notes, which
+  // is the whole point of reporting those separately — the notes hold, and the
+  // right answer is still named rather than lost.
+  const result = at(K.smear(K.cMajor()));
+  assert.ok(result.established);
+  assert.equal(result.signature.scale, 'C major', 'the note collection must survive reverb');
+  assert.ok(
+    [result.name, ...result.alternatives.map((a) => a.name)].includes('C major'),
+    `C major was not among the candidates: ${result.name}`,
+  );
+});
