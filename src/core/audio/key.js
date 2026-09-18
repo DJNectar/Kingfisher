@@ -2,100 +2,161 @@
  * Key estimation.
  *
  * The second value in this app that is worked out rather than read, and the
- * less reliable of the two. Tempo has an answer that exists in the audio as a
- * physical fact — beats really are that far apart. A key is a listener's
- * interpretation, and plenty of music genuinely does not have one.
+ * less reliable of the two. A tempo has an answer that exists in the audio as a
+ * physical fact — beats really are that far apart. A key is an interpretation,
+ * and plenty of music genuinely does not have one.
  *
- * So this is shaped as an estimate even more carefully than tempo is, and it
- * refuses more readily.
+ * TWO QUESTIONS, NOT ONE. This is the shape of the whole module:
  *
- * HOW IT WORKS.
+ *   1. WHICH NOTES ARE BEING USED — the key signature. Chroma answers this
+ *      well. It is a question about what is sounding.
+ *   2. WHICH OF THOSE NOTES IS HOME — the tonal centre. Chroma answers this
+ *      badly. It is a question about emphasis, which barely survives being
+ *      folded into twelve numbers.
  *
- *   1. CHROMA. Take the spectrum in long frames and fold every frequency onto
- *      one of the twelve pitch classes, ignoring which octave it came from.
- *      That gives a running picture of which of the twelve notes are sounding,
- *      independent of register.
+ * Almost every failure of this kind of analysis is question 2 dressed up as
+ * question 1. C major and A minor contain exactly the same seven notes; so do
+ * G Mixolydian and D Dorian. Nothing in the note collection distinguishes them.
+ * So the two are reported separately: the signature with confidence, and the
+ * centre as ranked candidates — and where the evidence does not separate them,
+ * all of the possibilities are named rather than one being picked silently.
  *
- *   2. PROFILES. Compare the average of that picture against the twenty-four
- *      key profiles of Krumhansl and Kessler — measured from listeners rating
- *      how well each note fits a key, not derived from theory. The rotation
- *      that correlates best is the reported key.
+ * WHAT DECIDES WHETHER THERE IS A KEY AT ALL. Not how well the best key scores:
+ * that was the first version's mistake, and it rated a drum loop "A minor, high
+ * confidence". Correlation is mean-removed and scale-invariant, so a flat chroma
+ * with a 1% wiggle correlates as strongly as real music with 15% peaks — the
+ * shape matches while the magnitude means nothing.
  *
- *   3. HOW CLOSE THE RUNNER-UP CAME. The single number that decides whether
- *      this is worth reporting. A piece firmly in one key beats its nearest
- *      rival comfortably; ambiguous or atonal material produces twenty-four
- *      near-identical scores, and that is what "no key" looks like from here.
+ * What decides it is DIATONIC CONCENTRATION: the share of pitched energy
+ * falling on the seven notes of the best-fitting scale. Seven notes out of
+ * twelve is 58.3% by chance, so that is the floor, and the distance above it is
+ * the evidence. It has the useful property of being explainable in words rather
+ * than being a number in bits.
  *
- * THE RELATIVE MAJOR AND MINOR. C major and A minor contain exactly the same
- * twelve notes in the same proportions. What separates them is emphasis, which
- * chroma captures only weakly, so confusing them is the standing failure of
- * every method of this kind. Where the runner-up is the relative key, the
- * report says so by name rather than quietly picking one — the same treatment
- * half-time gets from the tempo analysis.
+ * ONLY SPECTRAL PEAKS ARE COUNTED. Summing every bin lets the noise floor
+ * between partials vote as heavily as the partials, and on a real record that
+ * buries the harmony: the live recording used for calibration scored 63.6%
+ * that way, against a drum loop's 62.3%. Counting local maxima only lifts it to
+ * 67.7% while pushing the drums down to 61.2%.
  *
- * WHAT IT CANNOT DO. A drum stem has no key. An atonal piece has no key. A song
- * that modulates has several, and averaging them produces a key that is in the
- * piece nowhere. The first two are refused; the third is reported as movement,
- * section by section.
+ * HOW WELL DOES IT ACTUALLY WORK. Unknown, and the code should not pretend
+ * otherwise. Unlike a tempo, a key cannot be checked by counting, so synthetic
+ * fixtures can only show the machinery is not broken. The threshold below sits
+ * between one real recording and two synthetic non-tonal ones, which is not a
+ * calibration — it is a placeholder waiting for records whose key is known.
  */
 
 import { createFft, hannWindow } from './fft.js';
 import { downmix } from './tempo.js';
 
-export const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+// --------------------------------------------------------------- note names
 
 /**
- * Krumhansl-Kessler key profiles: how well each of the twelve pitch classes
- * fits a key, averaged over listeners asked exactly that. Index 0 is the tonic.
+ * How each key is spelled. Conventional choices: C♯ minor rather than D♭ minor,
+ * G♭ major rather than F♯ major — the spelling with fewer accidentals, and the
+ * one that keeps every relative pair consistent (B major with G♯ minor, D♭
+ * major with B♭ minor).
+ */
+const MAJOR_NAMES = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
+const MINOR_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'B♭', 'B'];
+
+/** How many sharps or flats each major scale carries, by its root pitch class. */
+const SIGNATURE = {
+  0: { count: 0, kind: null }, 7: { count: 1, kind: 'sharp' }, 2: { count: 2, kind: 'sharp' },
+  9: { count: 3, kind: 'sharp' }, 4: { count: 4, kind: 'sharp' }, 11: { count: 5, kind: 'sharp' },
+  6: { count: 6, kind: 'flat' }, 1: { count: 5, kind: 'flat' }, 8: { count: 4, kind: 'flat' },
+  3: { count: 3, kind: 'flat' }, 10: { count: 2, kind: 'flat' }, 5: { count: 1, kind: 'flat' },
+};
+
+const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
+
+/** The seven letter names, and the pitch class each one is without accidentals. */
+const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const LETTER_PITCH = [0, 2, 4, 5, 7, 9, 11];
+const ACCIDENTALS = { '-2': '\u266d\u266d', '-1': '\u266d', 0: '', 1: '\u266f', 2: '\u266f\u266f' };
+
+/**
+ * Spell a major scale properly: one of each letter, in order, with whatever
+ * accidental that requires.
  *
- * Measured from people rather than reasoned from theory, which is why they are
- * used here: the question being asked is what a listener would call this, and
- * that is a question about listeners.
+ * A major is A B C♯ D E F♯ G♯ — not "A B D♭ D E G♭ A♭", which is what naming
+ * each pitch class independently produces. The letter sequence is fixed; only
+ * the accidentals vary. Getting this wrong makes a report look written by
+ * something that does not read music.
  */
-const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
-const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+function spellMajorScale(root) {
+  // Which letter the root is written with, taken from its own key name.
+  const rootLetter = LETTERS.indexOf(MAJOR_NAMES[root][0]);
+  return MAJOR_SCALE.map((step, degree) => {
+    const letter = (rootLetter + degree) % 7;
+    const wanted = (root + step) % 12;
+    // How far the note sits from that letter's natural pitch, taken the short
+    // way round so B♯ does not come out as an eleven-semitone sharp.
+    let offset = (wanted - LETTER_PITCH[letter] + 12) % 12;
+    if (offset > 6) offset -= 12;
+    return `${LETTERS[letter]}${ACCIDENTALS[offset] ?? ''}`;
+  });
+}
 
 /**
- * Long frames, because the job is frequency resolution rather than timing.
- * At 44.1 kHz an 8192-point transform puts bins about 5.4 Hz apart, which is
- * just enough to keep neighbouring semitones separate down in the bass where
- * they are only a few hertz apart.
+ * The tonal centres worth considering for a given note collection, by how far
+ * above the scale root they sit.
+ *
+ * Restricted to the four that actually occur in quantity. Lydian, Phrygian and
+ * Locrian are real but rare enough that offering them would add noise to every
+ * answer to be right about one record in a thousand.
  */
+const MODES = [
+  { degree: 0, mode: 'major', label: (n) => `${n} major` },
+  { degree: 9, mode: 'minor', label: (n) => `${n} minor` },
+  { degree: 7, mode: 'Mixolydian', label: (n) => `${n} Mixolydian` },
+  { degree: 2, mode: 'Dorian', label: (n) => `${n} Dorian` },
+];
+
+// ---------------------------------------------------------------- constants
+
 const FRAME_SIZE = 8192;
-const HOP_DIVISOR = 2;
+const HOP = FRAME_SIZE / 2;
 
-/**
- * The range folded into chroma. Below C2 the semitones are closer together than
- * the analysis can separate and the result is mud; above C7 there is little but
- * harmonics and cymbals, which belong to no key in particular.
- */
+/** The range folded into chroma, and the narrower band the bass is read from. */
 const LOWEST_HZ = 65;
 const HIGHEST_HZ = 2100;
+const BASS_LOW_HZ = 50;
+const BASS_HIGH_HZ = 260;
 
-/** Sections for the moves-around analysis. Long, because a key needs notes. */
-const SECTION_SECONDS = 20;
+/** Seven notes out of twelve, if nothing is going on. */
+export const CHANCE_CONCENTRATION = 7 / 12;
 
 /**
- * How far the winner must beat the runner-up before a key is claimed, and where
- * the confidence grades sit. See the note on calibration in estimateKey().
+ * Where a key stops being claimed. Provisional: it sits between one real
+ * recording (67.7%) and two synthetic non-tonal fixtures (61.2%, 60.5%).
+ * Erring toward refusal on purpose — a wrong key carrying a caveat is worse
+ * than a blank, because a name invites you to act on it.
  */
-const ESTABLISH_MARGIN = 0.03;
-const HIGH_MARGIN = 0.15;
-const MEDIUM_MARGIN = 0.07;
+const ESTABLISH_CONCENTRATION = 0.65;
+const HIGH_CONCENTRATION = 0.75;
+const MEDIUM_CONCENTRATION = 0.69;
 
-/** Not enough music to have established a key. */
-const MINIMUM_SECONDS = 8;
+/** How close two centres must be before both are named instead of one chosen. */
+const AMBIGUOUS_WITHIN = 0.15;
+
+/** Sections for the moves-around analysis. Long, because a key needs notes. */
+const SECTION_SECONDS = 30;
+const MINIMUM_SECONDS = 10;
+
+/** The tail treated as the ending, where music tends to land on home. */
+const ENDING_SECONDS = 15;
 
 // ------------------------------------------------------------------- chroma
 
 /**
- * Fold a signal's spectrum onto the twelve pitch classes.
+ * Fold a signal's spectrum onto the twelve pitch classes, counting only
+ * spectral peaks.
  *
- * @returns {{frames: Float64Array[], fps: number}|null}
+ * @returns {{frames: Float64Array[], bass: Float64Array[], fps: number}|null}
  */
 export function chromagram(mono, sampleRate) {
-  const hop = Math.floor(FRAME_SIZE / HOP_DIVISOR);
-  const frameCount = Math.floor((mono.length - FRAME_SIZE) / hop) + 1;
+  const frameCount = Math.floor((mono.length - FRAME_SIZE) / HOP) + 1;
   if (frameCount < 2) return null;
 
   const fft = createFft(FRAME_SIZE);
@@ -103,138 +164,184 @@ export function chromagram(mono, sampleRate) {
   const frame = new Float64Array(FRAME_SIZE);
   const mags = new Float64Array(fft.bins);
 
-  // Which pitch class each bin belongs to, worked out once rather than per
-  // frame: it depends only on the sample rate.
-  const pitchClass = new Int8Array(fft.bins).fill(-1);
+  // Which bins are in range. The pitch class is NOT precomputed per bin: down
+  // in the bass a bin is wider than the gap between two semitones, so the bin
+  // centre alone names the wrong note. E♭2 is 77.78 Hz and D2 is 73.42 Hz —
+  // 4.4 Hz apart, against bins 5.4 Hz wide at 44.1 kHz. Read from bin centres,
+  // an E♭ bass line comes out as D, which is exactly what happened.
+  const inRange = new Uint8Array(fft.bins);
+  const isBass = new Uint8Array(fft.bins);
   for (let k = 1; k < fft.bins; k++) {
     const hz = (k * sampleRate) / FRAME_SIZE;
-    if (hz < LOWEST_HZ || hz > HIGHEST_HZ) continue;
-    const midi = 69 + 12 * Math.log2(hz / 440);
-    pitchClass[k] = ((Math.round(midi) % 12) + 12) % 12;
+    if (hz >= LOWEST_HZ && hz <= HIGHEST_HZ) inRange[k] = 1;
+    if (hz >= BASS_LOW_HZ && hz <= BASS_HIGH_HZ) isBass[k] = 1;
   }
+  const binHz = sampleRate / FRAME_SIZE;
 
   const frames = [];
+  const bass = [];
   for (let t = 0; t < frameCount; t++) {
-    const offset = t * hop;
+    const offset = t * HOP;
     for (let i = 0; i < FRAME_SIZE; i++) frame[i] = mono[offset + i] * window[i];
     fft.magnitudes(frame, mags);
 
     const chroma = new Float64Array(12);
-    for (let k = 1; k < fft.bins; k++) {
-      const pc = pitchClass[k];
-      if (pc < 0) continue;
-      // Compressed, so a loud chord does not outweigh a quiet passage that is
-      // just as much a part of the key.
-      chroma[pc] += Math.log1p(1000 * (mags[k] / FRAME_SIZE));
+    for (let k = 2; k < fft.bins - 1; k++) {
+      if (!inRange[k]) continue;
+      // A partial is a local maximum. Everything between partials is the noise
+      // floor, and letting it vote is what buries the harmony in a real mix.
+      if (!(mags[k] > mags[k - 1] && mags[k] >= mags[k + 1])) continue;
+      const pc = pitchClassAt(mags, k, binHz);
+      if (pc >= 0) chroma[pc] += mags[k];
     }
     frames.push(chroma);
+    bass.push(lowestNote(mags, inRange, isBass, fft.bins, binHz));
   }
 
-  return { frames, fps: sampleRate / hop };
+  return { frames, bass, fps: sampleRate / HOP };
 }
 
-/** Average a run of chroma frames into one twelve-note picture. */
-function averageChroma(frames) {
+/**
+ * Which note a spectral peak actually is.
+ *
+ * The peak's true frequency lies between bins, and a parabola through the bin
+ * and its two neighbours finds it — the same trick the tempo analysis uses to
+ * place a beat between frames. Without it a bass note can be named a semitone
+ * out, because the bins down there are wider than the notes.
+ */
+function pitchClassAt(mags, k, binHz) {
+  const a = mags[k - 1];
+  const b = mags[k];
+  const c = mags[k + 1];
+  const denominator = a - 2 * b + c;
+  const offset = denominator === 0 ? 0 : (0.5 * (a - c)) / denominator;
+  const hz = (k + (Math.abs(offset) <= 1 ? offset : 0)) * binHz;
+  if (!(hz > 0)) return -1;
+  return ((Math.round(69 + 12 * Math.log2(hz / 440)) % 12) + 12) % 12;
+}
+
+/**
+ * The note the bass is playing in this frame: its LOWEST strong partial.
+ *
+ * Summing everything in a low band does not read the bass, it reads the bass
+ * plus its own harmonics — and the third harmonic of any note is a fifth above
+ * it. Measured on a fixture whose bass plays C, A, F and G, that approach
+ * reported the bass as 34.5% G against 13.2% C, because every note was voting
+ * for its own fifth. The whole point of reading the bass separately is that it
+ * names the root, so it has to be the fundamental and nothing else.
+ */
+function lowestNote(mags, inRange, isBass, bins, binHz) {
+  const found = new Float64Array(12);
+
+  let strongest = 0;
+  for (let k = 2; k < bins - 1; k++) {
+    if (isBass[k] && mags[k] > strongest) strongest = mags[k];
+  }
+  if (!(strongest > 0)) return found;
+
+  for (let k = 2; k < bins - 1; k++) {
+    if (!isBass[k] || !inRange[k]) continue;
+    if (!(mags[k] > mags[k - 1] && mags[k] >= mags[k + 1])) continue;
+    // The first peak with real energy behind it going up from the bottom. A
+    // quarter of the band's strongest partial is enough to be a note and not
+    // enough to be a skirt of the one below it.
+    if (mags[k] < strongest * 0.25) continue;
+    const pc = pitchClassAt(mags, k, binHz);
+    // One vote, not the magnitude. What matters is how much of the TIME the
+    // bass spends on a note, and magnitude does not measure that: a peak's
+    // size varies with frequency, so weighting by it let a loud G outvote a
+    // C that was played for half as long again.
+    if (pc >= 0) found[pc] = 1;
+    return found;
+  }
+  return found;
+}
+
+/** Sum a run of chroma frames and normalise to shares of one. */
+function pool(frames, from = 0, to = frames.length) {
   const total = new Float64Array(12);
-  for (const frame of frames) {
-    for (let i = 0; i < 12; i++) total[i] += frame[i];
+  for (let i = from; i < to; i++) {
+    const frame = frames[i];
+    for (let p = 0; p < 12; p++) total[p] += frame[p];
   }
   let sum = 0;
-  for (let i = 0; i < 12; i++) sum += total[i];
+  for (let p = 0; p < 12; p++) sum += total[p];
   if (!(sum > 0)) return null;
-  for (let i = 0; i < 12; i++) total[i] /= sum;
+  for (let p = 0; p < 12; p++) total[p] /= sum;
   return total;
 }
 
-// -------------------------------------------------------------------- keys
+// ---------------------------------------------------------- note collection
 
 /**
- * Score a chroma vector against all twenty-four keys.
+ * Which seven notes is this music using, and how much of its energy sits on
+ * them?
  *
- * @returns {{tonic:number, mode:string, score:number, runnerUp:object, margin:number}|null}
+ * @returns {{root:number, concentration:number}|null}
  */
-export function keyFromChroma(chroma) {
+export function noteCollection(chroma) {
   if (!chroma) return null;
-
-  const scored = [];
-  for (let tonic = 0; tonic < 12; tonic++) {
-    scored.push({ tonic, mode: 'major', score: correlate(chroma, MAJOR_PROFILE, tonic) });
-    scored.push({ tonic, mode: 'minor', score: correlate(chroma, MINOR_PROFILE, tonic) });
+  let best = -1;
+  let bestRoot = 0;
+  for (let root = 0; root < 12; root++) {
+    let share = 0;
+    for (const step of MAJOR_SCALE) share += chroma[(root + step) % 12];
+    if (share > best) {
+      best = share;
+      bestRoot = root;
+    }
   }
-  scored.sort((a, b) => b.score - a.score);
-
-  const best = scored[0];
-  const runnerUp = scored[1];
-  if (!Number.isFinite(best.score)) return null;
-
-  return {
-    tonic: best.tonic,
-    mode: best.mode,
-    score: best.score,
-    runnerUp: { tonic: runnerUp.tonic, mode: runnerUp.mode, score: runnerUp.score },
-    /**
-     * How far clear the winner finished. This, not the winning score itself, is
-     * what says whether the answer means anything: a piece can correlate well
-     * with its key and equally well with five others, and that is not a key.
-     */
-    margin: best.score - runnerUp.score,
-  };
+  return { root: bestRoot, concentration: best };
 }
 
-/** Pearson correlation of a chroma vector against a profile rotated to `tonic`. */
-function correlate(chroma, profile, tonic) {
-  let meanC = 0;
-  let meanP = 0;
-  for (let i = 0; i < 12; i++) {
-    meanC += chroma[i];
-    meanP += profile[i];
+// ------------------------------------------------------------ tonal centre
+
+/**
+ * Rank the possible tonal centres within a note collection.
+ *
+ * Three pieces of evidence, none decisive alone:
+ *
+ *   how much of the music is that note        — a tonic gets played a lot
+ *   how much of the BASS is that note         — root motion lands on home,
+ *                                               and the bass says so most clearly
+ *   how much of the ENDING is that note       — music tends to finish at home
+ *
+ * The last two are why this is better than matching a profile and stopping.
+ * A profile sees only proportions, and the proportions of C major and A minor
+ * are identical; a bass line sitting on A and a final chord of A minor are not.
+ */
+function rankCentres(collection, { full, bassChroma, ending }) {
+  const candidates = MODES.map(({ degree, mode, label }) => {
+    const tonic = (collection.root + degree) % 12;
+    const name = label(mode === 'minor' ? MINOR_NAMES[tonic] : MAJOR_NAMES[tonic]);
+    const evidence = {
+      overall: full[tonic],
+      bass: bassChroma ? bassChroma[tonic] : 0,
+      ending: ending ? ending[tonic] : 0,
+    };
+    // Weighted toward the bass, which is the strongest single indicator of
+    // where home is and the one a plain chroma throws away.
+    const score = evidence.overall * 0.35 + evidence.bass * 0.45 + evidence.ending * 0.20;
+    return { tonic, mode, name, score, evidence };
+  });
+
+  candidates.sort((a, b) => b.score - a.score);
+  const top = candidates[0].score;
+  // Relative to the leader, so "within 15%" means the same thing whatever the
+  // absolute numbers happen to be.
+  for (const candidate of candidates) {
+    candidate.closeness = top > 0 ? candidate.score / top : 0;
   }
-  meanC /= 12;
-  meanP /= 12;
-
-  let numerator = 0;
-  let varC = 0;
-  let varP = 0;
-  for (let i = 0; i < 12; i++) {
-    const c = chroma[(i + tonic) % 12] - meanC;
-    const p = profile[i] - meanP;
-    numerator += c * p;
-    varC += c * c;
-    varP += p * p;
-  }
-  const denominator = Math.sqrt(varC * varP);
-  return denominator > 0 ? numerator / denominator : 0;
-}
-
-/** "F♯ minor". */
-export function keyName(tonic, mode) {
-  return `${NOTE_NAMES[((tonic % 12) + 12) % 12]} ${mode}`;
-}
-
-/** The relative minor of a major key, or the relative major of a minor one. */
-function relativeOf(tonic, mode) {
-  return mode === 'major'
-    ? { tonic: (tonic + 9) % 12, mode: 'minor' }
-    : { tonic: (tonic + 3) % 12, mode: 'major' };
-}
-
-function isRelative(a, b) {
-  const relative = relativeOf(a.tonic, a.mode);
-  return relative.tonic === b.tonic && relative.mode === b.mode;
+  return candidates;
 }
 
 // --------------------------------------------------------------- the piece
 
 /**
- * Estimate the key of decoded audio, and whether it stays put.
+ * Estimate the key of decoded audio.
  *
- * A NOTE ON THE THRESHOLDS. The margins above are calibrated on synthetic
- * material in known keys, where the answer is not a matter of opinion. That
- * catches a broken implementation. It does NOT establish how often this is
- * right about real records, which needs recordings whose key is independently
- * known — and unlike a tempo, a key cannot be checked by counting. Treat the
- * confidence grade as this method's own opinion of its evidence, not as a
- * measured hit rate.
+ * @param {Float32Array[]} channelData one array per channel
+ * @param {{sampleRate:number}} opts
  */
 export function estimateKey(channelData, { sampleRate } = {}) {
   if (!channelData?.length || !sampleRate) return null;
@@ -245,99 +352,150 @@ export function estimateKey(channelData, { sampleRate } = {}) {
     return notEstablished(`This is ${seconds.toFixed(1)} seconds long. Establishing a key needs at least about ${MINIMUM_SECONDS} seconds of music.`);
   }
 
-  const chroma = chromagram(mono, sampleRate);
-  if (!chroma) return notEstablished('There was not enough audio to analyse.');
+  const cg = chromagram(mono, sampleRate);
+  if (!cg) return notEstablished('There was not enough audio to analyse.');
 
-  const overall = keyFromChroma(averageChroma(chroma.frames));
-  if (!overall) return notEstablished('There was no pitched content to analyse — silence, or noise with no notes in it.');
-
-  if (overall.margin < ESTABLISH_MARGIN) {
-    return notEstablished('No key stood out. The notes present fit two dozen keys about equally well, which is what percussion, atonal material and heavily processed sound look like from here.');
+  const full = pool(cg.frames);
+  if (!full) {
+    return notEstablished('There was no pitched content to analyse — silence, or sound with no notes in it.');
   }
 
-  const sections = analyseSections(chroma, overall);
-  const settled = sections.filter((s) => s.key);
-  const agreement = settled.length
-    ? settled.filter((s) => s.key.tonic === overall.tonic && s.key.mode === overall.mode).length / settled.length
-    : 0;
+  const collection = noteCollection(full);
 
-  const moves = settled.length >= 3 && agreement < 0.6;
+  if (collection.concentration < ESTABLISH_CONCENTRATION) {
+    return notEstablished(
+      `Only ${(collection.concentration * 100).toFixed(0)}% of the pitched energy falls on any one seven-note scale, against ${(CHANCE_CONCENTRATION * 100).toFixed(0)}% that would land there by chance. That is what drums, atonal material and heavily processed sound look like: no key fits better than any other.`,
+      collection.concentration,
+    );
+  }
+
+  const endingFrom = Math.max(0, cg.frames.length - Math.round(ENDING_SECONDS * cg.fps));
+  const candidates = rankCentres(collection, {
+    full,
+    bassChroma: pool(cg.bass),
+    ending: pool(cg.frames, endingFrom),
+  });
+
+  const winner = candidates[0];
+  const alternatives = candidates.slice(1).filter((c) => c.closeness >= 1 - AMBIGUOUS_WITHIN);
+  const sections = analyseSections(cg);
+  const settled = sections.filter((s) => s.name);
+  // Null, not zero, when the piece is too short to have sections at all. A
+  // three-minute single that was never divided has not disagreed with itself,
+  // and scoring it as though it had would mark every short piece down.
+  const agreement = settled.length
+    ? settled.filter((s) => s.name === winner.name).length / settled.length
+    : null;
 
   return {
     established: true,
-    tonic: overall.tonic,
-    mode: overall.mode,
-    name: keyName(overall.tonic, overall.mode),
-    confidence: gradeConfidence(overall.margin, agreement),
-    margin: overall.margin,
-    agreement,
+
     /**
-     * The runner-up, always named. Where it is the relative major or minor it
-     * is called that, because those two keys share every note and telling them
-     * apart is the known weakness of this whole approach.
+     * The note collection. This is the confident half of the answer: the
+     * question chroma is actually good at.
      */
-    runnerUp: {
-      name: keyName(overall.runnerUp.tonic, overall.runnerUp.mode),
-      isRelative: isRelative(overall, overall.runnerUp),
-      margin: overall.margin,
-    },
-    steady: !moves,
-    sections: sections.map((s) => ({
-      startSeconds: s.startSeconds,
-      name: s.key ? keyName(s.key.tonic, s.key.mode) : null,
-      settled: Boolean(s.key),
-    })),
-    startsIn: settled.length ? keyName(settled[0].key.tonic, settled[0].key.mode) : null,
-    endsIn: settled.length ? keyName(settled.at(-1).key.tonic, settled.at(-1).key.mode) : null,
+    signature: signatureOf(collection.root),
+    concentration: collection.concentration,
+
+    /** The likeliest tonal centre — the half chroma is weak at. */
+    name: winner.name,
+    tonic: winner.tonic,
+    mode: winner.mode,
+
+    /**
+     * Every centre that fits these same notes nearly as well. Named rather
+     * than discarded, because picking one silently is how a report becomes
+     * confidently wrong about the difference between C major and A minor.
+     */
+    alternatives: alternatives.map((c) => ({ name: c.name, mode: c.mode, closeness: c.closeness })),
+    ambiguous: alternatives.length > 0,
+
+    confidence: gradeConfidence(collection.concentration, agreement, alternatives.length),
+    agreement,
+
+    steady: !(settled.length >= 3 && agreement !== null && agreement < 0.6),
+    sections: sections.map((s) => ({ startSeconds: s.startSeconds, name: s.name })),
+    startsIn: settled[0]?.name ?? null,
+    endsIn: settled.at(-1)?.name ?? null,
     sectionSeconds: SECTION_SECONDS,
-    method: 'chroma folded to twelve pitch classes, matched against Krumhansl-Kessler key profiles',
-    limits: limitsFor(overall, moves),
+
+    method: 'chroma from spectral peaks, folded to twelve pitch classes; the tonal centre weighted by bass content and by the ending',
+    limits: limitsFor(winner, alternatives, settled, agreement),
   };
 }
 
-function analyseSections({ frames, fps }, overall) {
+function analyseSections({ frames, bass, fps }) {
   const size = Math.round(SECTION_SECONDS * fps);
-  if (frames.length < size) return [];
+  if (frames.length < size * 2) return [];
 
   const sections = [];
   for (let start = 0; start + size <= frames.length; start += size) {
-    const key = keyFromChroma(averageChroma(frames.slice(start, start + size)));
-    sections.push({
-      startSeconds: start / fps,
-      // A section that cannot make up its mind contributes nothing rather than
-      // voting for whatever it happened to score highest on.
-      key: key && key.margin >= ESTABLISH_MARGIN ? key : null,
+    const chroma = pool(frames, start, start + size);
+    const collection = chroma ? noteCollection(chroma) : null;
+    if (!collection || collection.concentration < ESTABLISH_CONCENTRATION) {
+      // A section that cannot make up its mind contributes nothing, rather
+      // than voting for whatever it happened to score highest on.
+      sections.push({ startSeconds: start / fps, name: null });
+      continue;
+    }
+    const ranked = rankCentres(collection, {
+      full: chroma,
+      bassChroma: pool(bass, start, start + size),
+      ending: null,
     });
+    sections.push({ startSeconds: start / fps, name: ranked[0].name });
   }
   return sections;
 }
 
-function gradeConfidence(margin, agreement) {
-  if (margin >= HIGH_MARGIN && agreement >= 0.75) return 'high';
-  if (margin >= MEDIUM_MARGIN && agreement >= 0.5) return 'medium';
+function signatureOf(root) {
+  const { count, kind } = SIGNATURE[root];
+  return {
+    root,
+    scale: `${MAJOR_NAMES[root]} major`,
+    count,
+    kind,
+    name: count === 0 ? 'no sharps or flats' : `${count} ${kind}${count === 1 ? '' : 's'}`,
+    notes: spellMajorScale(root),
+  };
+}
+
+function gradeConfidence(concentration, agreement, alternativeCount) {
+  // An ambiguous centre is never high confidence, however clear the notes are:
+  // the signature being certain says nothing about which note is home.
+  if (alternativeCount > 0) return concentration >= HIGH_CONCENTRATION ? 'medium' : 'low';
+  // A piece with no sections has not disagreed with itself; only a piece that
+  // HAS sections can be marked down for them disagreeing.
+  const agrees = agreement === null || agreement >= 0.75;
+  const halfAgrees = agreement === null || agreement >= 0.5;
+  if (concentration >= HIGH_CONCENTRATION && agrees) return 'high';
+  if (concentration >= MEDIUM_CONCENTRATION && halfAgrees) return 'medium';
   return 'low';
 }
 
-function limitsFor(overall, moves) {
+function limitsFor(winner, alternatives, settled, agreement) {
   const limits = [
     'This key was worked out from the audio. It is not a value stored in the file.',
-    'A key is an interpretation rather than a measurement, and plenty of music does not have one.',
+    'Which notes are being used is the part this can establish well. Which of them is home is a judgement about emphasis, and much harder to read from a recording.',
   ];
-  if (isRelative(overall, overall.runnerUp)) {
-    limits.push(`The next best fit was ${keyName(overall.runnerUp.tonic, overall.runnerUp.mode)}, the relative key, which contains exactly the same notes. Telling those two apart is the known weakness of this method.`);
+  if (alternatives.length) {
+    limits.push(`${[winner.name, ...alternatives.map((a) => a.name)].join(', ')} all use these same seven notes, and the evidence does not clearly separate them.`);
   }
-  if (moves) {
-    limits.push('Different sections settled on different keys, so no single key describes the whole piece.');
+  if (settled.length >= 3 && agreement !== null && agreement < 0.6) {
+    limits.push('Different sections settled on different centres, so no single key describes the whole piece.');
   }
   return limits;
 }
 
-function notEstablished(reason) {
+function notEstablished(reason, concentration = null) {
   return {
     established: false,
     name: null,
     tonic: null,
     mode: null,
+    signature: null,
+    concentration,
+    alternatives: [],
     reason,
     confidence: null,
     sections: [],
