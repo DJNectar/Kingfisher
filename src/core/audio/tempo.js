@@ -337,6 +337,30 @@ export function tempoFromOnsets(oss, fps, { minBpm = MIN_BPM, maxBpm = MAX_BPM }
   };
 }
 
+/**
+ * The same pulse, counted the other way — but only when that is a real
+ * question.
+ *
+ * Every tempo has a half and a double, arithmetically. Saying so for all of
+ * them is noise: nobody counting a 120 BPM track wonders whether it is 60 or
+ * 240. It bites at the edges, where a listener really might count differently —
+ * 150 felt in half-time as 75, drum and bass at 174 felt as 87, a slow soul
+ * tune at 70 counted as 140.
+ *
+ * So the alternative is offered only there, and named the way a musician would
+ * say it rather than presented as a rival answer the app could not choose
+ * between.
+ */
+function alternativeFeel(bpm) {
+  if (bpm >= 140 && bpm / 2 >= MIN_BPM) {
+    return { bpm: bpm / 2, name: 'half-time', note: 'the same pulse, counted every other beat' };
+  }
+  if (bpm <= 80 && bpm * 2 <= MAX_BPM) {
+    return { bpm: bpm * 2, name: 'double-time', note: 'the same pulse, counted twice as often' };
+  }
+  return null;
+}
+
 /** Where a listener would put an ambiguous tempo. A convention, not a fact. */
 function tempoPrior(bpm) {
   const octaves = Math.log2(bpm / PRIOR_CENTRE_BPM) / PRIOR_WIDTH_OCTAVES;
@@ -379,22 +403,42 @@ export function estimateTempo(channelData, { sampleRate } = {}) {
   const mono = downmix(channelData);
   const seconds = mono.length / sampleRate;
 
-  // Below this there is not enough signal for the lowest tempo considered to
-  // have repeated even twice, and two beats is not evidence of a tempo.
-  const minimumSeconds = (2 * 60) / MIN_BPM + 1;
-  if (seconds < minimumSeconds) {
-    return notEstablished(`This is ${seconds.toFixed(1)} seconds long. Establishing a tempo needs at least about ${Math.ceil(minimumSeconds)} seconds of audio.`);
-  }
+  const tooShort = tooShortToAnswer(seconds);
+  if (tooShort) return tooShort;
 
   const onsets = onsetStrength(mono, sampleRate);
   if (!onsets) return notEstablished('There was not enough audio to analyse.');
+  return tempoFromOnsetSignal(onsets);
+}
 
-  const overall = tempoFromOnsets(onsets.oss, onsets.fps);
+/**
+ * Below this there is not enough signal for the slowest tempo considered to
+ * have repeated even twice, and two beats is not evidence of a tempo.
+ */
+function tooShortToAnswer(seconds) {
+  const minimum = (2 * 60) / MIN_BPM + 1;
+  if (seconds >= minimum) return null;
+  return notEstablished(`This is ${seconds.toFixed(1)} seconds long. Establishing a tempo needs at least about ${Math.ceil(minimum)} seconds of audio.`);
+}
+
+/**
+ * Read a tempo off a finished onset signal.
+ *
+ * Shared by both routes in: samples decoded by the browser, and samples read
+ * straight out of an uncompressed file as it is scanned. Neither knows about
+ * the other, and both get the same answer for the same audio — which is the
+ * same reason `measure.js` is shared between them.
+ */
+export function tempoFromOnsetSignal({ oss, fps }) {
+  const tooShort = tooShortToAnswer(oss.length / fps);
+  if (tooShort) return tooShort;
+
+  const overall = tempoFromOnsets(oss, fps);
   if (!overall) {
     return notEstablished('No repeating pulse was found. Music without a steady beat has no single tempo to report.');
   }
 
-  const windows = analyseWindows(onsets, overall.bpm);
+  const windows = analyseWindows({ oss, fps }, overall.bpm);
 
   // Judge the evidence on the windows, not on the whole song. A performance
   // that speeds up correlates poorly end to end precisely BECAUSE it has a
@@ -435,22 +479,94 @@ export function estimateTempo(channelData, { sampleRate } = {}) {
     }
   }
 
+  // Report the middle of the windows rather than the whole-song figure. For a
+  // performance that moves, the whole-song number is pulled toward whichever
+  // section happened to be most regular; the median is where the piece sat. On
+  // steady material the two agree to within the resolution anyway.
+  const bpm = reliable.length >= 3 ? centre : overall.bpm;
+
   return {
     established: true,
-    bpm: reliable.length >= 3 ? centre : overall.bpm,
+    bpm,
     confidence: gradeConfidence(correlation, agreement),
-    /** How regularly the audio repeats at this tempo: 1 is exact, 0 is not at all. */
+    /** How regularly the audio repeats at this tempo: 1 is exact, 0 not at all. */
     correlation,
     agreement,
     steady,
     range,
-    /** The half and double this could equally be. Named, never hidden. */
-    alternatives: [centre / 2, centre * 2].filter((b) => b >= MIN_BPM && b <= MAX_BPM),
+    /**
+     * The same pulse counted the other way, when a listener might genuinely
+     * count it that way. See alternativeFeel().
+     */
+    alternativeFeel: alternativeFeel(bpm),
     resolutionBpm: overall.resolutionBpm,
     windows: windows.map((w) => ({ startSeconds: w.startSeconds, bpm: w.bpm, reliable: w.reliable })),
     windowSeconds: WINDOW_SECONDS,
     method: 'spectral-flux onsets, autocorrelation, 120 BPM perceptual prior',
     limits: limitsFor(steady),
+  };
+}
+
+/**
+ * Build the onset signal a sample at a time, for audio that arrives as a
+ * stream rather than as one array.
+ *
+ * An uncompressed file is already being walked sample by sample to measure its
+ * levels. Feeding those same samples through here costs one more pass over
+ * numbers that are in hand anyway, and means a WAV never has to be decoded to
+ * get a tempo — which would be reading the same audio twice, the second time
+ * the long way round.
+ *
+ * Constant memory: one frame of history, not the whole file.
+ */
+export function createOnsetStream(sampleRate) {
+  const hop = Math.max(1, Math.round(sampleRate / TARGET_FPS));
+  const fps = sampleRate / hop;
+  const fft = createFft(FRAME_SIZE);
+  const window = hannWindow(FRAME_SIZE);
+
+  const ring = new Float64Array(FRAME_SIZE);
+  const frame = new Float64Array(FRAME_SIZE);
+  const mags = new Float64Array(fft.bins);
+  const previous = new Float64Array(fft.bins);
+  const flux = [];
+
+  let filled = 0;
+  let sinceLastFrame = 0;
+
+  return {
+    fps,
+    /** One mono sample. Channels must already be mixed down by the caller. */
+    push(value) {
+      ring[filled % FRAME_SIZE] = value;
+      filled++;
+      sinceLastFrame++;
+      if (filled < FRAME_SIZE || sinceLastFrame < hop) return;
+      sinceLastFrame = 0;
+
+      // Unwrap the ring into chronological order before transforming it.
+      const start = filled % FRAME_SIZE;
+      for (let i = 0; i < FRAME_SIZE; i++) {
+        frame[i] = ring[(start + i) % FRAME_SIZE] * window[i];
+      }
+      fft.magnitudes(frame, mags);
+
+      let sum = 0;
+      for (let k = 0; k < fft.bins; k++) {
+        const m = Math.log1p(1000 * (mags[k] / FRAME_SIZE));
+        const rise = m - previous[k];
+        if (rise > 0) sum += rise;
+        previous[k] = m;
+      }
+      flux.push(sum);
+    },
+    /** @returns {{oss:Float64Array, fps:number}|null} */
+    finish() {
+      if (flux.length < 4) return null;
+      const oss = Float64Array.from(flux);
+      oss[0] = 0;
+      return { oss: normalize(smooth(oss), fps), fps };
+    },
   };
 }
 
@@ -519,7 +635,7 @@ function median(values) {
 function limitsFor(steady) {
   const limits = [
     'This tempo was worked out from the audio. It is not a value stored in the file.',
-    'A tempo can always be heard at half or double what is reported; which one a listener would say is a judgement, not a measurement.',
+    'Which beat a listener counts \u2014 and so whether they call it this tempo, half of it, or double \u2014 is a judgement rather than a measurement.',
   ];
   if (steady) {
     limits.push('No movement was found beyond this method’s own precision, which is not the same as proving the tempo never moves.');

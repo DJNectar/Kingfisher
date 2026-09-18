@@ -131,14 +131,32 @@ test('tempo: a very small drift is still caught', () => {
 
 // ------------------------------------------------------------ honesty of output
 
-test('tempo: always names the half and double it could also be', () => {
-  const result = at(clickTrack(120, 45));
-  assert.ok(result.alternatives.includes(60) || result.alternatives.some((a) => Math.abs(a - 60) < 1));
-  assert.ok(result.alternatives.some((a) => Math.abs(a - 240) < 1) || result.alternatives.length >= 1);
-  assert.ok(
-    result.limits.some((l) => /half or double/i.test(l)),
-    'the octave ambiguity must be stated in the limits',
-  );
+test('tempo: offers the other feel only where it is a real question', () => {
+  // Fast enough that a listener might count in half-time.
+  const fast = at(clickTrack(160, 45));
+  assert.ok(fast.alternativeFeel, '160 BPM should offer half-time');
+  assert.equal(fast.alternativeFeel.name, 'half-time');
+  assert.ok(Math.abs(fast.alternativeFeel.bpm - 80) < 1);
+
+  // Slow enough that a listener might count double.
+  const slow = at(clickTrack(70, 45));
+  assert.ok(slow.alternativeFeel, '70 BPM should offer double-time');
+  assert.equal(slow.alternativeFeel.name, 'double-time');
+  assert.ok(Math.abs(slow.alternativeFeel.bpm - 140) < 1);
+
+  // Squarely in the middle: offering "60 or 240" would be noise, not honesty.
+  const middling = at(clickTrack(120, 45));
+  assert.equal(middling.alternativeFeel, null, '120 BPM needs no alternative');
+});
+
+test('tempo: the counting ambiguity is stated in the limits whatever the tempo', () => {
+  for (const bpm of [70, 120, 160]) {
+    const result = at(clickTrack(bpm, 45));
+    assert.ok(
+      result.limits.some((l) => /judgement rather than a measurement/i.test(l)),
+      `${bpm} BPM did not state the counting ambiguity`,
+    );
+  }
 });
 
 test('tempo: says plainly that the value was worked out, not read from the file', () => {
