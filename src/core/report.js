@@ -146,6 +146,22 @@ export function createReport(file = {}) {
     /** Measured signal statistics. Null when the audio was not scanned. */
     audio: null,
 
+    /**
+     * Tempo, in two strictly separate halves:
+     *
+     *   stated    what the file claims, out of a tag or an ACID chunk
+     *   measured  what the audio turned out to be, worked out by listening
+     *
+     * They are never merged and neither corrects the other. Everything else in
+     * this report is read from the file; `measured` is the one value that is an
+     * opinion about it, and it carries its own confidence and limits so it
+     * cannot be mistaken for a stored field.
+     */
+    tempo: {
+      stated: null,
+      measured: null,
+    },
+
     /** Factual notes produced by the observation rules. Never comparisons. */
     observations: [],
 
@@ -213,6 +229,17 @@ export function summarizeReport(report) {
      * Read directly off the assessment rather than importing the provenance
      * module, to keep this model free of dependencies on the analysis.
      */
+    /*
+     * Tempo, for the same reason as the origin flag below: list views and the
+     * history CSV read the summary, so a logged check would otherwise lose its
+     * tempo even though the stored report still holds it. Stated and measured
+     * stay separate here as everywhere else.
+     */
+    statedBpm: report.tempo?.stated?.bpm ?? null,
+    measuredBpm: report.tempo?.measured?.established ? report.tempo.measured.bpm : null,
+    tempoConfidence: report.tempo?.measured?.established ? report.tempo.measured.confidence : null,
+    tempoSteady: report.tempo?.measured?.established ? report.tempo.measured.steady : null,
+
     originFlag: report.provenance?.assessment?.flag ?? null,
     originConfidence: report.provenance?.assessment?.confidence ?? null,
     originHeadline: report.provenance?.assessment?.headline ?? null,

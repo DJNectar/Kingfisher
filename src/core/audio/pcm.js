@@ -43,9 +43,15 @@ function fullScaleThreshold(bitDepth, isFloat) {
 /**
  * @param {import('../bytes.js').ByteSource} source
  * @param {object} report a parsed report (read-only here)
+ * @param {{maxScanBytes?:number, onsetCollector?:object}} options
+ *   `onsetCollector` is fed the mono downmix as the scan walks it, so tempo
+ *   costs one extra pass over samples already in hand rather than a decode.
  * @returns {Promise<object|null>} stats, or null when there is nothing to measure
  */
-export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCAN_BYTES } = {}) {
+export async function scanAudio(source, report, {
+  maxScanBytes = DEFAULT_MAX_SCAN_BYTES,
+  onsetCollector = null,
+} = {}) {
   const f = report.format;
   const a = report.audioData;
 
@@ -55,7 +61,7 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
     // not do. Say nothing rather than measure the wrong thing.
     return {
       measured: false,
-      reason: `${f.codec || 'This format'} is not uncompressed PCM, so levels were not measured (the app does not decode audio).`,
+      reason: `${f.codec || 'This format'} is not uncompressed PCM, so its levels cannot be read from the file's bytes. They are measured by decoding it instead.`,
     };
   }
   if (!f.channels || !f.bitDepth) return null;
@@ -89,6 +95,16 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
   const ranges = planRanges(a.offset, totalBytes, frameBytes, maxScanBytes);
   const threshold = fullScaleThreshold(f.bitDepth, isFloat);
 
+  // A very large file is sampled at intervals rather than read end to end. That
+  // is fine for levels, which are a summary, and useless for tempo: the joins
+  // between probes are not silence, they are jump cuts, and the gaps between
+  // them are not time. Onsets either see a continuous performance or they see
+  // nothing worth reporting.
+  const onsets = ranges.length === 1 ? onsetCollector : null;
+  if (onsetCollector && !onsets) {
+    onsetCollector.abandon('This file is too large to read end to end, so it was sampled at intervals. Tempo needs continuous audio.');
+  }
+
   const ch = Array.from({ length: f.channels }, () => newChannelAccumulator());
 
   let framesScanned = 0;
@@ -109,9 +125,13 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
       const baseFrame = (pos - a.offset) / frameBytes;
       for (let o = 0; o < usable; o += frameBytes) {
         const frameIndex = baseFrame + o / frameBytes;
+        let sum = 0;
         for (let c = 0; c < f.channels; c++) {
-          accumulate(ch[c], readSample(view, o + c * bytesPerSample), frameIndex, threshold);
+          const value = readSample(view, o + c * bytesPerSample);
+          accumulate(ch[c], value, frameIndex, threshold);
+          sum += value;
         }
+        if (onsets) onsets.push(sum / f.channels);
         framesScanned++;
       }
 

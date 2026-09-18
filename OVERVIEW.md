@@ -84,11 +84,49 @@ than silently dropped.
 For uncompressed formats, levels are measured from the file's own samples, with
 no decoding and no guessing.
 
-For compressed formats — MP3, AAC, ALAC, FLAC, Ogg — a **Measure levels**
-button appears. One click decodes the audio in your browser and measures it
-properly. It is opt-in because decoding is real work, and the report always
-says which of the two it did, so a measured level is never confused with a
-decoded one.
+For compressed formats — MP3, AAC, ALAC, FLAC, Ogg — there is nothing to
+measure until a decoder has made the samples, so the file is decoded in your
+browser as part of checking it. The report always says which of the two routes
+it took, so a scanned reading is never confused with a decoded one. A file past
+the memory guard is left alone, and the report says why rather than taking the
+browser down.
+
+### Tempo
+
+Every report carries a tempo, in two strictly separate halves:
+
+- **Stated** — what the file claims, out of an ID3 `TBPM` frame, an MP4 `tmpo`
+  atom, a Vorbis `BPM` comment or an ACID chunk.
+- **Measured** — what the audio turned out to be.
+
+They are never merged and neither corrects the other. Where they disagree, the
+report shows both and says so: a tag reading 100 over a performance at 128 is a
+fact about the file worth seeing, and which one is right is not something this
+app can settle.
+
+The measured value is **the only number in Kingfisher that is worked out rather
+than read**, so it is shaped as an estimate throughout. It carries:
+
+- a **confidence**, graded from how regularly the audio repeats and whether
+  independent sections of it agree
+- its own **precision** at that tempo, in BPM
+- a **range** when the performance moves — a live take reports "150.6 BPM,
+  moves between 146.4 and 157.7" rather than pretending a band is a click
+  track. A range is only claimed when the spread is larger than the method's own
+  margin of error, so a track cut to a click reports "steady" instead of
+  inventing a performance detail.
+- a **tempo map** through the piece, every twelve seconds
+- the **half-time or double-time reading**, where a listener might genuinely
+  count it the other way — above 140 BPM or below 80. At 120 it says nothing,
+  because nobody is confused.
+
+And where nothing repeats regularly enough for a tempo to mean anything — an
+ambient piece, a rubato performance, a spoken word recording — it says so
+instead of producing a number. An early version reported a confident 84 BPM for
+pure noise; that is the failure this is built to avoid.
+
+For uncompressed audio the tempo costs nothing extra: the samples are already
+being walked to measure the levels, so the file never has to be decoded.
 
 ### Observations
 

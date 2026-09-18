@@ -101,6 +101,7 @@ actual content.
 
 | Item | Why not done |
 |---|---|
+| **Key detection** | The companion to tempo, and the harder half: roughly 70–80% right on ordinary material, with relative major/minor confusion as the standing failure. Would need the same estimate-shaped presentation tempo got. |
 | **LUFS / loudness measurement** | Needs K-weighting filters and gating. `bext` loudness fields are *read* where present, but measuring is real DSP and guessing would violate the app's core rule. Worth doing properly if delivery specs matter to you. |
 | **True-peak (inter-sample) detection** | Needs oversampling. Current peak is sample-peak and is labelled as such rather than implying more. |
 | **RIFX (big-endian RIFF)** | Detected and explicitly refused rather than misread. No reference file existed to verify against, and shipping unverified byte-order handling is how wrong numbers appear. |

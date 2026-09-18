@@ -533,11 +533,20 @@ export function createOnsetStream(sampleRate) {
 
   let filled = 0;
   let sinceLastFrame = 0;
+  let abandoned = null;
 
   return {
     fps,
+    /**
+     * Stop collecting, with a reason. Used when the caller discovers the audio
+     * it is about to supply is not continuous, which makes onsets meaningless.
+     */
+    abandon(reason) {
+      abandoned = reason;
+    },
     /** One mono sample. Channels must already be mixed down by the caller. */
     push(value) {
+      if (abandoned) return;
       ring[filled % FRAME_SIZE] = value;
       filled++;
       sinceLastFrame++;
@@ -560,8 +569,11 @@ export function createOnsetStream(sampleRate) {
       }
       flux.push(sum);
     },
-    /** @returns {{oss:Float64Array, fps:number}|null} */
+    /**
+     * @returns {{oss:Float64Array, fps:number}|{abandoned:string}|null}
+     */
     finish() {
+      if (abandoned) return { abandoned };
       if (flux.length < 4) return null;
       const oss = Float64Array.from(flux);
       oss[0] = 0;

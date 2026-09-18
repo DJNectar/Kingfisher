@@ -578,3 +578,89 @@ The **Clients** tab is now **Projects**, which is what people go there for; its
 roster heading reads "Projects by client", so the tab and the page agree.
 
 **45 browser assertions, all passing. 166 unit tests, all passing.**
+
+---
+
+## Session 7 — tempo, and the cost of calibrating on synthetic audio
+
+The first number in Kingfisher that is **worked out rather than read**. Every
+other value is in the file somewhere; this one is an opinion about it, and can
+be plausibly wrong in a way a header field cannot. So it is shaped as an
+estimate throughout — its own confidence, its own precision, the half-time or
+double-time reading, and a plain statement that it is not a stored value.
+
+Three failures, each of which produced a confident wrong answer.
+
+28. **160 and 174 BPM came back at exactly half.** It looked like the perceptual
+    prior. It was not. At 100 onset readings a second, a beat period of 37.5
+    frames fits no whole autocorrelation lag; the grid drifts a little further
+    out of step with every beat and the correlation at the true tempo collapses
+    to 0.72, while its half sits on exactly 75 frames and scores 0.99. A
+    property of the instrument, not the music, and the kind of error that looks
+    like a plausible answer. Doubling the frame rate and widening the onset
+    peaks lifts the true tempo back above its half at every tempo tested — now
+    within 0.05 BPM from 60 to 174.
+
+29. **Pure noise was rated a confident 84 BPM.** Peak prominence was being
+    measured on the prior-weighted score, so the prior was manufacturing its own
+    evidence: it built the peak and was then credited for finding it. Now
+    measured on the raw correlation.
+
+30. **And then the noise fixture turned out not to be noise.** The detector found
+    a genuine periodicity at 84.3 with harmonics at 42.2 and 126 — which is a
+    linear congruential generator's lattice structure, framed up at 200 frames a
+    second. The fixture was lying, not the code. Replaced with splitmix32, and a
+    sustained drone added as the honest no-tempo case.
+
+### Calibrating on synthetic audio nearly shipped a useless feature
+The establish-or-refuse threshold was set from click tracks and a drone, where
+the separation is obvious: 0.97 against 0.15. On the first real recording —
+a live band, five and a half minutes — that threshold **refused to give a tempo
+at all**.
+
+The recording correlates at 0.28. Only twice a drone. And yet fifty-two
+independent windows all placed it within 10% of 150 BPM, which is about as
+convincing as evidence gets. Real music is nowhere near as periodic as a click
+track and is still perfectly trackable.
+
+| material | correlation | window agreement |
+|---|---|---|
+| click track | 0.97 | 1.00 |
+| click track speeding up | 0.74 | 1.00 |
+| abrupt tempo change | 0.95 | 0.63 |
+| **live rock band, real** | **0.28** | **1.00** |
+| sustained drone | 0.15 | 1.00 |
+| noise | 0.06 | 0.13 |
+
+Neither measure works alone — the drone agrees perfectly on a tempo no listener
+would hear — so both now have to hold. The thresholds come from five synthetic
+signals and one real recording, which is enough to catch these failures and not
+enough to call them tuned. The source says so.
+
+### Two decisions the user made, and what they cost
+**Automatic on every file.** Tempo was to run without being asked. For
+uncompressed audio that is free — the samples are already being walked to
+measure levels, so the onset signal rides along and a WAV is never decoded. For
+compressed audio there is no route to samples except the decoder, so MP3s and
+AACs are now decoded as part of checking them. That contradicted "this app never
+decodes audio unless you ask", which was written into the README, the Help tab
+and `decode.js` itself. All of it was corrected rather than left saying
+something that had stopped being true.
+
+**Tile plus section.** The tile sits in a row of facts read out of the file, so
+it always says "estimated" and how far to trust it — otherwise it would be taken
+for one of them.
+
+### "Could also be 75 BPM" was confusing, and was
+Caught by the user reading the raw output. It sounds like the app is torn
+between two answers; it is not, it is the same pulse counted in half-time. Now
+said that way, and only above 140 or below 80 where a listener might genuinely
+count differently. At 120 it says nothing.
+
+**Also:** a file's *stated* tempo — ID3 `TBPM`, MP4 `tmpo`, Vorbis `BPM`, the
+ACID chunk — is now read and shown beside the measured one. They are never
+merged and neither corrects the other; where they disagree the report says so
+and leaves it there. A BPM tag of 0 is treated as "not set" rather than reported
+as a tempo of zero, for the same reason blanks are never written as numbers.
+
+**52 browser assertions, all passing. 207 unit tests, all passing.**

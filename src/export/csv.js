@@ -80,6 +80,17 @@ const COLUMNS = [
     ? (r.audio.source === 'decoded' ? `decoded (${r.audio.decodedBy ?? 'browser'})` : "the file's own samples")
     : null)],
 
+  // Tempo. The stated and the measured stay in separate columns on purpose: a
+  // spreadsheet is exactly where you would want to sort a delivery by the gap
+  // between what a file claims and what it turned out to be.
+  ['Stated BPM', (r) => r.tempo?.stated?.bpm],
+  ['Stated BPM source', (r) => r.tempo?.stated?.source],
+  ['Measured BPM', (r) => (r.tempo?.measured?.established ? round(r.tempo.measured.bpm, 2) : null)],
+  ['Tempo confidence', (r) => (r.tempo?.measured?.established ? r.tempo.measured.confidence : null)],
+  ['Tempo steady', (r) => (r.tempo?.measured?.established ? yesNo(r.tempo.measured.steady) : null)],
+  ['Tempo low BPM', (r) => round(r.tempo?.measured?.range?.min, 2)],
+  ['Tempo high BPM', (r) => round(r.tempo?.measured?.range?.max, 2)],
+
   ['Observations', (r) => r.observations.length],
   ['Needs a look', (r) => r.observations.filter((o) => o.severity === 'attention').map((o) => o.title).join(' | ')],
   ['Worth noting', (r) => r.observations.filter((o) => o.severity === 'notice').map((o) => o.title).join(' | ')],
@@ -119,6 +130,8 @@ export function historyToCsv(rowsIn) {
       put('Duration (h:mm:ss)', clock(s.durationSeconds));
       put('Codec', s.codec);
       put('Peak (dBFS)', dbfs(s.peakDbfs));
+      put('Measured BPM', round(s.measuredBpm, 2));
+      put('Stated BPM', s.statedBpm);
       put('Origin flag', originFlagLabel(s.originFlag));
       put('Origin confidence', s.originConfidence);
       put('Origin headline', s.originHeadline);

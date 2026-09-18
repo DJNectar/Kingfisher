@@ -16,6 +16,7 @@ import {
 import { reportsToCsv, historyToCsv, toCsv } from '../src/export/csv.js';
 import { textToPdfBytes } from '../src/export/pdf.js';
 import { inspectPdf } from './helpers/pdf-check.js';
+import { createReport, summarizeReport } from '../src/core/report.js';
 import { createLibrary } from '../src/store/schema.js';
 import * as L from '../src/store/library.js';
 import * as F from './helpers/wav-fixtures.js';
@@ -325,4 +326,108 @@ function parseCsvRow(row) {
   }
   out.push(cur);
   return out;
+}
+
+// ------------------------------------------------------------------- tempo
+
+test('exports: tempo appears in the text report, stated and measured apart', () => {
+  const report = reportWithTempo();
+  const text = renderFileReport(report);
+
+  assert.match(text, /TEMPO/);
+  assert.match(text, /Stated in the file:\s+100 BPM/);
+  assert.match(text, /Measured from the audio:\s+128\.00 BPM/);
+  assert.match(text, /Confidence:\s+high/);
+  assert.match(text, /moves between 124\.0 and 131\.0 BPM/);
+  // The disagreement is pointed out, not resolved.
+  assert.match(text, /difference of 28\.0 BPM/);
+  assert.match(text, /Both are reported as found/);
+});
+
+test('exports: the text report says a measured tempo is not a stored value', () => {
+  const text = renderFileReport(reportWithTempo());
+  assert.match(text, /not a value stored in the file/i);
+});
+
+test('exports: a tempo that could not be established says why, with no number', () => {
+  const report = reportWithTempo();
+  report.tempo.stated = null;
+  report.tempo.measured = {
+    established: false,
+    bpm: null,
+    reason: 'The audio does not repeat regularly enough for a tempo to mean anything.',
+    range: null,
+    limits: [],
+  };
+  const text = renderFileReport(report);
+  assert.match(text, /not established/);
+  assert.match(text, /does not repeat regularly enough/);
+  assert.doesNotMatch(text, /\d+\.\d+ BPM/);
+});
+
+test('exports: CSV keeps stated and measured tempo in separate columns', () => {
+  const csv = reportsToCsv([reportWithTempo()]);
+  const [header, row] = csv.split('\r\n');
+  const columns = header.split(',');
+  const values = row.split(',');
+  const cell = (name) => values[columns.indexOf(name)];
+
+  assert.ok(columns.includes('Stated BPM'), 'no Stated BPM column');
+  assert.ok(columns.includes('Measured BPM'), 'no Measured BPM column');
+  assert.equal(cell('Stated BPM'), '100');
+  assert.equal(cell('Measured BPM'), '128');
+  assert.equal(cell('Tempo confidence'), 'high');
+  assert.equal(cell('Tempo steady'), 'no');
+  assert.equal(cell('Tempo low BPM'), '124');
+  assert.equal(cell('Tempo high BPM'), '131');
+});
+
+test('exports: an unestablished tempo leaves the CSV cells empty, never zero', () => {
+  const report = reportWithTempo();
+  report.tempo.stated = null;
+  report.tempo.measured = { established: false, bpm: null, reason: 'no pulse', range: null, limits: [] };
+  const csv = reportsToCsv([report]);
+  const [header, row] = csv.split('\r\n');
+  const columns = header.split(',');
+  const values = row.split(',');
+  for (const name of ['Stated BPM', 'Measured BPM', 'Tempo low BPM', 'Tempo high BPM']) {
+    assert.equal(values[columns.indexOf(name)], '', `${name} should be blank, not a number`);
+  }
+});
+
+test('exports: the log summary carries tempo, so history does not lose it', () => {
+  const summary = summarizeReport(reportWithTempo());
+  assert.equal(summary.statedBpm, 100);
+  assert.equal(summary.measuredBpm, 128);
+  assert.equal(summary.tempoConfidence, 'high');
+  assert.equal(summary.tempoSteady, false);
+});
+
+/** A minimal report carrying a stated tempo that disagrees with the measured one. */
+function reportWithTempo() {
+  const report = createReport({ name: 'take.wav', path: 'take.wav', size: 1000 });
+  report.parse.status = 'ok';
+  report.parse.parser = 'wav';
+  report.format.codec = 'PCM';
+  report.format.sampleRate = 44100;
+  report.format.bitDepth = 24;
+  report.format.channels = 2;
+  report.duration.seconds = 60;
+  report.tempo.stated = { bpm: 100, source: 'ID3 tag (TBPM)', exact: false };
+  report.tempo.measured = {
+    established: true,
+    bpm: 128,
+    confidence: 'high',
+    correlation: 0.9,
+    agreement: 1,
+    steady: false,
+    range: { min: 124, max: 131, spread: 7 },
+    alternativeFeel: null,
+    resolutionBpm: 1.2,
+    windows: [],
+    windowSeconds: 12,
+    method: 'spectral-flux onsets, autocorrelation, 120 BPM perceptual prior',
+    limits: ['This tempo was worked out from the audio. It is not a value stored in the file.'],
+  };
+  return report;
 }

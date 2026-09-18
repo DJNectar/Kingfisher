@@ -105,6 +105,7 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
     }
 
     lines.push(...renderLevels(report));
+    lines.push(...renderTempo(report));
   }
 
   lines.push(...renderObservations(report.observations));
@@ -212,7 +213,60 @@ function renderLevels(report) {
   return lines;
 }
 
-export function renderObservations(observations) {
+export /**
+ * Tempo, in the export as on screen: the file's claim and the app's reading,
+ * side by side, neither correcting the other.
+ */
+function renderTempo(report) {
+  const measured = report.tempo?.measured;
+  const stated = report.tempo?.stated;
+  if (!measured && !stated) return [];
+
+  const lines = [];
+  lines.push(section('TEMPO'));
+
+  if (stated) lines.push(row('Stated in the file', `${stated.bpm} BPM  (${stated.source})`));
+
+  if (measured?.established) {
+    lines.push(row('Measured from the audio', `${measured.bpm.toFixed(2)} BPM`));
+    lines.push(row('Confidence', measured.confidence));
+    lines.push(row(
+      'Through the piece',
+      measured.range
+        ? `moves between ${measured.range.min.toFixed(1)} and ${measured.range.max.toFixed(1)} BPM`
+        : 'steady \u2014 no movement beyond what this method can resolve',
+    ));
+    if (measured.alternativeFeel) {
+      lines.push(row(
+        `Or ${measured.alternativeFeel.name}`,
+        `${measured.alternativeFeel.bpm.toFixed(1)} BPM \u2014 ${measured.alternativeFeel.note}`,
+      ));
+    }
+    lines.push(row('Precision', `\u00b1${measured.resolutionBpm.toFixed(2)} BPM at this tempo`));
+    lines.push(row('How', measured.method));
+
+    if (stated) {
+      const difference = Math.abs(measured.bpm - stated.bpm);
+      if (difference > Math.max(1, measured.resolutionBpm)) {
+        lines.push('');
+        lines.push(`  The file states ${stated.bpm} BPM and the audio measures ${measured.bpm.toFixed(1)},`);
+        lines.push(`  a difference of ${difference.toFixed(1)} BPM. Both are reported as found.`);
+      }
+    }
+  } else if (measured) {
+    lines.push(row('Measured from the audio', 'not established'));
+    lines.push(row('Why not', measured.reason));
+  }
+
+  if (measured?.limits?.length) {
+    lines.push('');
+    for (const limit of measured.limits) lines.push(`  \u2022 ${limit}`);
+  }
+
+  return lines;
+}
+
+function renderObservations(observations) {
   const lines = [section('OBSERVATIONS')];
   if (!observations.length) {
     lines.push('  Nothing to note. No unusual values or signal conditions were found.');

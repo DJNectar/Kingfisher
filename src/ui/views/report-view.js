@@ -83,6 +83,8 @@ export function renderReportCard(report, {
     // ---- 4. detail
     if (report.audio?.measured) body.append(levelsSection(report, !expandAll));
     else body.append(measureOffer(report, onMeasureLevels));
+    const tempo = tempoSection(report, !expandAll);
+    if (tempo) body.append(tempo);
     const meta = metadataSections(report, !expandAll);
     for (const s of meta) body.append(s);
     body.append(chunkSection(report));
@@ -264,6 +266,27 @@ function factStrip(report) {
     facts.push(['Peak', null, 'not measured']);
   }
 
+  // The tempo tile, and the one place in this strip where the note under the
+  // number is doing real work. Every other tile holds something read out of the
+  // file; this one holds an estimate, and sitting in the same row it would
+  // otherwise be taken for the same kind of fact. So it always says "estimated"
+  // and how much to trust it, and the section below carries the rest.
+  const tempo = report.tempo?.measured;
+  const stated = report.tempo?.stated;
+  if (tempo?.established) {
+    facts.push([
+      'Tempo',
+      `${tempo.bpm.toFixed(tempo.bpm < 100 ? 1 : 0)}`,
+      `BPM estimated, ${tempo.confidence} confidence${tempo.steady ? '' : ' \u00b7 moves'}`,
+    ]);
+  } else if (stated) {
+    // Nothing could be measured, but the file makes a claim. Show the claim and
+    // label it as one.
+    facts.push(['Tempo', `${stated.bpm}`, 'BPM stated in the file']);
+  } else if (tempo) {
+    facts.push(['Tempo', null, 'not established']);
+  }
+
   return el(
     'div',
     { class: 'facts' },
@@ -349,6 +372,95 @@ function measureOffer(report, onMeasureLevels) {
   });
 
   return wrap;
+}
+
+/**
+ * The tempo section: what the file says, what the audio turned out to be, and
+ * exactly how much weight either deserves.
+ *
+ * Laid out so the two can never be confused for one another. A stated tempo is
+ * a claim someone typed; a measured one is this app's reading of the audio.
+ * They sit in separate rows with their sources named, and where they disagree
+ * the disagreement is shown rather than resolved — a tag that says 100 over a
+ * performance at 128 is a fact about the file worth seeing.
+ */
+function tempoSection(report, collapsed) {
+  const measured = report.tempo?.measured;
+  const stated = report.tempo?.stated;
+  if (!measured && !stated) return null;
+
+  const body = el('div', {});
+  const rows = [];
+
+  if (stated) {
+    rows.push(['Stated in the file', `${stated.bpm} BPM`]);
+    rows.push(['Where it says so', stated.source]);
+  }
+
+  if (measured?.established) {
+    rows.push(['Measured from the audio', `${measured.bpm.toFixed(2)} BPM`]);
+    rows.push(['Confidence', measured.confidence]);
+    rows.push([
+      'Through the piece',
+      measured.range
+        ? `moves between ${measured.range.min.toFixed(1)} and ${measured.range.max.toFixed(1)} BPM`
+        : 'steady \u2014 no movement beyond what this method can resolve',
+    ]);
+    if (measured.alternativeFeel) {
+      rows.push([
+        `Or ${measured.alternativeFeel.name}`,
+        `${measured.alternativeFeel.bpm.toFixed(1)} BPM \u2014 ${measured.alternativeFeel.note}`,
+      ]);
+    }
+    rows.push(['Precision', `\u00b1${measured.resolutionBpm.toFixed(2)} BPM at this tempo`]);
+    rows.push(['How', measured.method]);
+  } else if (measured) {
+    rows.push(['Measured from the audio', 'not established']);
+    rows.push(['Why not', measured.reason]);
+  }
+
+  body.append(kv(rows));
+
+  // Where both exist and disagree, say so plainly. Not as a fault — the file
+  // may be right and the performance loose, or the tag may simply be wrong —
+  // but a reader comparing two numbers should not have to do the subtraction.
+  if (stated && measured?.established) {
+    const difference = Math.abs(measured.bpm - stated.bpm);
+    if (difference > Math.max(1, measured.resolutionBpm)) {
+      body.append(el('p', {
+        class: 'muted',
+        text: `The file states ${stated.bpm} BPM; the audio measures ${measured.bpm.toFixed(1)}, a difference of ${difference.toFixed(1)}. Both are reported as found. Which one is right is not something this app can settle.`,
+      }));
+    }
+  }
+
+  if (measured?.established && measured.windows?.length > 2) {
+    const reliable = measured.windows.filter((w) => w.reliable);
+    if (reliable.length > 2) {
+      body.append(el('h4', { text: `Tempo through the piece, every ${measured.windowSeconds} seconds` }));
+      body.append(table(
+        ['At', { label: 'BPM', class: 'num' }],
+        // Whole seconds: a window boundary is an analysis artefact, and
+        // printing it to the millisecond implies a precision it does not have.
+        reliable.map((w) => [clockMinutes(w.startSeconds), w.bpm.toFixed(1)]),
+      ));
+    }
+  }
+
+  if (measured?.limits?.length) {
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'What this number is, and is not. ' }),
+      measured.limits.join(' '),
+    ]));
+  }
+
+  return section('Tempo', body, { open: !collapsed });
+}
+
+/** m:ss, for marking a position in a piece rather than timing an edit. */
+function clockMinutes(seconds) {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
 function levelsSection(report, collapsed) {

@@ -946,3 +946,21 @@ export function minimalM4a({
 
   return concat(ftypBox(), ...extraTopLevel, moov, mp4Box('mdat', new Uint8Array(mdatBytes)));
 }
+
+/**
+ * An 'acid' chunk, as loop libraries write it: 24 bytes, with the tempo as a
+ * little-endian float at offset 20 and the root note as a 16-bit value at 4.
+ */
+export function acidChunk({ tempo = 120, rootNote = 60, beats = 16, meter = [4, 4], flags = 0x02 } = {}) {
+  const b = new Uint8Array(24);
+  const dv = new DataView(b.buffer);
+  dv.setUint32(0, flags, true);
+  dv.setUint16(4, rootNote, true);
+  dv.setUint16(6, 0, true);
+  dv.setUint32(8, 0, true);
+  dv.setUint32(12, beats, true);
+  dv.setUint16(16, meter[1], true);
+  dv.setUint16(18, meter[0], true);
+  dv.setFloat32(20, tempo, true);
+  return b;
+}

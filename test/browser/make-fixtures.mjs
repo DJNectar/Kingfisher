@@ -3,6 +3,7 @@
 //
 // Run:  node test/browser/make-fixtures.mjs
 import * as F from '../helpers/wav-fixtures.js';
+import { clickTrack } from '../helpers/tempo-fixtures.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -104,6 +105,24 @@ w('11 plain.mp3', F.mp3File({
   id3v2: F.id3v2Tag([['TIT2', 'Ordinary Take'], ['TSSE', 'LAME3.100']]),
   frames: Array.from({ length: 400 }, () => F.mp3Frame({})),
 }));
+
+// A click track at exactly 128 BPM, for the tempo path. Uncompressed on
+// purpose: an uncompressed file must get its tempo out of the sample scan that
+// already happens, without ever being decoded.
+{
+  const rate = 44100;
+  const click = clickTrack(128, 40, rate);
+  w('12 click-128.wav', F.riff([
+    F.fmtChunk({ sampleRate: rate, channels: 2, bitsPerSample: 24 }),
+    F.listInfoChunk({ INAM: 'Click 128' }),
+    F.chunk('data', F.pcmData({
+      frames: click.length,
+      channels: 2,
+      bitsPerSample: 24,
+      gen: (i) => click[i] * 0.5,
+    })),
+  ]));
+}
 
 // A non-audio file, to prove folder scans skip them
 writeFileSync(`${dir}/notes.txt`, 'not audio');

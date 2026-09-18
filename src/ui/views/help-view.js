@@ -33,6 +33,7 @@ export function renderHelp(host) {
         ['provenance', 'Where a file came from'],
         ['checking', 'Checking a file or folder'],
         ['reading', 'Reading the results'],
+        ['tempo', 'Tempo'],
         ['clients', 'Clients and projects'],
         ['todo', 'The to-do list'],
         ['saving', 'Saving your work'],
@@ -161,6 +162,24 @@ export function renderHelp(host) {
       el('p', { class: 'muted', text: 'In short: this section is a useful place to look, and never a verdict. It is here so you can see what a file claims, and decide for yourself what that is worth.' }),
 
       // ------------------------------------------------------------------
+      // ------------------------------------------------------------------
+      h3('tempo', 'Tempo'),
+      el('p', { text: 'Every report carries a tempo, and it comes in two halves that are deliberately never mixed together.' }),
+      ul([
+        el('span', {}, [el('strong', { text: 'Stated' }), ' is what the file claims about itself \u2014 a number somebody typed into a tag, or that a loop library wrote into the file.']),
+        el('span', {}, [el('strong', { text: 'Measured' }), ' is what the audio turned out to be when Kingfisher worked it out by listening.']),
+      ]),
+      el('p', { text: 'Neither corrects the other. If a file says 100 BPM and plays at 128, you see both numbers and the difference between them, because which one is right is not something this app can decide.' }),
+      el('h4', { text: 'Why it says "estimated"' }),
+      el('p', { text: 'Everything else in a report is read out of the file: the sample rate is written in the header, the peak is in the samples. A tempo is not in the file. It is worked out by arithmetic, and unlike a header field it can be wrong. So it always carries how confident it is, how precise it can be at that tempo, and what it could not establish.' }),
+      el('h4', { text: 'Average, and range' }),
+      el('p', { text: 'Music moves. A live band speeds up into a chorus and settles again, and a single number hides that. So the tempo is also measured in short sections through the piece, and where the movement is real you get a range \u2014 "150.6 BPM, moves between 146.4 and 157.7" \u2014 plus a table showing where it went.' }),
+      el('p', { class: 'muted', text: 'A range is only shown when the movement is bigger than the method\u2019s own margin of error. A track cut to a click says "steady", rather than turning measurement wobble into a performance detail that was never there.' }),
+      el('h4', { text: 'Half-time and double-time' }),
+      el('p', { text: 'Any tempo can be counted at half or double its speed \u2014 150 felt as 75, or a slow tune at 70 counted as 140. Kingfisher shows the alternative only where a listener might genuinely count it the other way: above 140 BPM or below 80. In the middle it says nothing, because nobody is confused about whether 120 is really 60.' }),
+      el('h4', { text: 'When there is no answer' }),
+      el('p', { text: 'Ambient music, a rubato piano piece, spoken word, a field recording \u2014 plenty of audio has no steady pulse, and for those Kingfisher says so rather than producing a number. A tempo you cannot rely on is worse than no tempo at all, because a number invites you to act on it.' }),
+
       h3('clients', 'Clients and projects'),
       el('p', { text: 'Kingfisher keeps a record of your work in two levels:' }),
       ul([

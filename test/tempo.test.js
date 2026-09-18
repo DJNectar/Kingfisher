@@ -13,6 +13,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { estimateTempo, onsetStrength, tempoFromOnsets, downmix } from '../src/core/audio/tempo.js';
+import { statedTempo } from '../src/core/audio/stated-tempo.js';
+import { inspectSource } from '../src/core/registry.js';
+import { BufferByteSource } from '../src/core/bytes.js';
+import { riff, fmtChunk, chunk, pcmData, acidChunk } from './helpers/wav-fixtures.js';
 import {
   clickTrack,
   rampingClickTrack,
@@ -210,4 +214,119 @@ test('tempo: periodicity search returns null when there is no energy', () => {
 test('tempo: correlation separates a real pulse from a wash', () => {
   const pulsed = at(clickTrack(120, 45));
   assert.ok(pulsed.correlation > 0.8, `a click track only correlated at ${pulsed.correlation}`);
+});
+
+// ------------------------------------------------- what the file says it is
+
+test('statedTempo: reads a BPM from each format that stores one', () => {
+  const cases = [
+    [{ acid: { tempo: 93.75 } }, 93.75, /ACID/],
+    [{ id3v2: { frames: { TBPM: { value: '128' } } } }, 128, /ID3/],
+    [{ itunes: { tmpo: { value: 140 } } }, 140, /MP4/],
+    [{ vorbisComment: { tags: { BPM: ['174'] } } }, 174, /Vorbis/],
+  ];
+  for (const [metadata, expected, sourcePattern] of cases) {
+    const stated = statedTempo({ metadata });
+    assert.ok(stated, `nothing read from ${JSON.stringify(metadata)}`);
+    assert.equal(stated.bpm, expected);
+    assert.match(stated.source, sourcePattern);
+  }
+});
+
+test('statedTempo: the ACID chunk wins, because it is the only one not rounded', () => {
+  const stated = statedTempo({
+    metadata: { acid: { tempo: 93.75 }, id3v2: { frames: { TBPM: { value: '94' } } } },
+  });
+  assert.equal(stated.bpm, 93.75);
+  assert.equal(stated.exact, true);
+});
+
+test('statedTempo: a BPM field of zero is not a stated tempo', () => {
+  // Plenty of software writes 0 to mean "not set". Reporting "0 BPM" would turn
+  // a blank into a claim, which is the mistake this whole app exists to avoid.
+  assert.equal(statedTempo({ metadata: { id3v2: { frames: { TBPM: { value: '0' } } } } }), null);
+  assert.equal(statedTempo({ metadata: { itunes: { tmpo: { value: 0 } } } }), null);
+});
+
+test('statedTempo: survives the junk a free-text tag can hold', () => {
+  assert.equal(statedTempo({ metadata: { id3v2: { frames: { TBPM: { value: ' 128 bpm' } } } } }).bpm, 128);
+  assert.equal(statedTempo({ metadata: { id3v2: { frames: { TBPM: { value: '128.5' } } } } }).bpm, 128.5);
+  assert.equal(statedTempo({ metadata: { id3v2: { frames: { TBPM: { value: 'moderately fast' } } } } }), null);
+  assert.equal(statedTempo({ metadata: { id3v2: { frames: { TBPM: { value: '99999' } } } } }), null);
+});
+
+test('statedTempo: nothing stated is null, never a guess', () => {
+  assert.equal(statedTempo({ metadata: {} }), null);
+  assert.equal(statedTempo({}), null);
+});
+
+// ------------------------------------------- through the whole pipeline
+
+test('tempo: an uncompressed file gets a tempo without ever being decoded', async () => {
+  const click = clickTrack(128, 40, RATE);
+  const bytes = riff([
+    fmtChunk({ sampleRate: RATE, channels: 2, bitsPerSample: 24 }),
+    chunk('data', pcmData({
+      frames: click.length,
+      channels: 2,
+      bitsPerSample: 24,
+      gen: (f) => click[f] * 0.5,
+    })),
+  ]);
+
+  const report = await inspectSource(new BufferByteSource(Buffer.from(bytes)), {
+    name: 'click.wav', path: 'click.wav', size: bytes.length,
+  });
+
+  assert.equal(report.parse.status, 'ok');
+  assert.ok(report.tempo.measured.established);
+  assert.ok(Math.abs(report.tempo.measured.bpm - 128) < 1);
+  // The levels still come from the file's own bytes: adding tempo must not have
+  // quietly turned the scan into a decode.
+  assert.equal(report.audio.source, 'file bytes');
+});
+
+test('tempo: a stated tempo and a measured one are both reported, unmerged', async () => {
+  // A file that says 100 BPM and is actually 128. Neither value is allowed to
+  // correct the other — seeing the disagreement is the whole point.
+  const click = clickTrack(128, 40, RATE);
+  const bytes = riff([
+    fmtChunk({ sampleRate: RATE, channels: 2, bitsPerSample: 24 }),
+    chunk('acid', acidChunk({ tempo: 100 })),
+    chunk('data', pcmData({
+      frames: click.length,
+      channels: 2,
+      bitsPerSample: 24,
+      gen: (f) => click[f] * 0.5,
+    })),
+  ]);
+
+  const report = await inspectSource(new BufferByteSource(Buffer.from(bytes)), {
+    name: 'mislabelled.wav', path: 'mislabelled.wav', size: bytes.length,
+  });
+
+  assert.equal(report.tempo.stated.bpm, 100);
+  assert.ok(Math.abs(report.tempo.measured.bpm - 128) < 1);
+});
+
+test('tempo: a file sampled at intervals reports no tempo, and says why', async () => {
+  const click = clickTrack(120, 30, RATE);
+  const bytes = riff([
+    fmtChunk({ sampleRate: RATE, channels: 2, bitsPerSample: 24 }),
+    chunk('data', pcmData({
+      frames: click.length,
+      channels: 2,
+      bitsPerSample: 24,
+      gen: (f) => click[f] * 0.5,
+    })),
+  ]);
+
+  // Force the sampled path, as a file too large to read end to end would.
+  const report = await inspectSource(new BufferByteSource(Buffer.from(bytes)), {
+    name: 'huge.wav', path: 'huge.wav', size: bytes.length,
+  }, { maxScanBytes: 1024 * 1024 });
+
+  assert.equal(report.tempo.measured.established, false);
+  assert.match(report.tempo.measured.reason, /continuous/i);
+  assert.equal(report.tempo.measured.bpm, null);
 });

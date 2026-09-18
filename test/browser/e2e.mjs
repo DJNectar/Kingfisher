@@ -286,10 +286,11 @@ await page.click('.tab[data-view="inspect"]');
   await dontLog(page);
   await page.waitForTimeout(1500);
 
-  const offer = page.locator('.measure-offer button');
-  expect('an offer to measure levels is shown', /./, (await offer.count()) ? 'yes' : '');
-  await offer.first().click();
+  // No button to press: a compressed file is decoded as part of checking it,
+  // because its levels and its tempo do not exist until something has.
   await page.waitForSelector('.detail-section:has-text("Levels")', { timeout: 60000 });
+  expect('no measure-levels button is left to press', /^0$/,
+    String(await page.locator('.measure-offer button').count()));
 
   // The Levels section renders already open for a single file, so clicking its
   // summary unconditionally would close it and read back nothing.
@@ -412,6 +413,48 @@ step('Destination window creates a client and a project');
   await page.waitForTimeout(1500);
   expect('the second project is filed under the same client', /Wren Recordings › Mix revisions/,
     await page.locator('#pick-target').textContent());
+}
+
+// -------------------------------------------------------------- 12. tempo
+// The one number in the app that is worked out rather than read, so what is
+// tested here is as much how it is PRESENTED as whether it is right.
+step('Tempo: measured, stated, and refused');
+{
+  await page.click('.tab[data-view="inspect"]');
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([join(AUDIO, '12 click-128.wav')]);
+  await dontLog(page);
+  await page.waitForTimeout(3000);
+
+  const card = page.locator('.report').first();
+  const tiles = await card.locator('.facts').innerText();
+  expect('a tempo tile is shown', /TEMPO/i, tiles);
+  expect('the tile reads about 128 BPM', /\b12[6-9]\b/, tiles);
+  // The tile sits in a row of facts read out of the file, so it has to say
+  // what it is or it will be taken for one of them.
+  expect('the tile says the value is estimated', /estimated/i, tiles);
+
+  const tempoSection = card.locator('.detail-section:has-text("Tempo")').first();
+  if ((await tempoSection.getAttribute('open')) === null) {
+    await tempoSection.locator('summary').click();
+    await page.waitForTimeout(300);
+  }
+  const tempo = await tempoSection.locator('.detail-body').innerText();
+
+  // The WAV was never decoded: its samples were already being read for levels.
+  const levels = await card.locator('.detail-section:has-text("Levels") .detail-body').innerText();
+  expect('an uncompressed file was not decoded to get its tempo', /file's own samples|file bytes/i, levels);
+
+  // 127.99, not 128.00: the click track is 128 BPM and the estimate lands
+  // within its own stated precision of it. Demanding an exact 128 would be
+  // asserting more accuracy than the method claims.
+  expect('the measured tempo is shown', /Measured from the audio\s*12[78]\.\d+ BPM/, tempo.replace(/\n/g, ' '));
+  expect('a confidence is given', /Confidence\s*high/, tempo.replace(/\n/g, ' '));
+  expect('a click track is reported steady, with no invented range', /steady/i, tempo);
+  expect('the precision is stated', /±\s*[\d.]+ BPM/, tempo);
+  expect('it says the number was not read from the file', /not a value stored in the file/i, tempo);
+  await page.screenshot({ path: join(HERE, 'shot-tempo.png'), fullPage: false });
 }
 
 console.log('\n=== RESULT ===');

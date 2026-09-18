@@ -194,8 +194,9 @@ async function measureLevelsFor(report) {
     throw new Error('The original file is no longer available in this session. Check it again to measure its levels.');
   }
 
-  const stats = await decodeAndMeasure(file, report);
+  const { stats, tempo } = await decodeAndMeasure(file, report);
   report.audio = stats;
+  if (tempo) report.tempo.measured = tempo;
   report.observations = runRules(report);
 
   // A logged copy of this report should gain the levels too, if it is in the
@@ -206,10 +207,16 @@ async function measureLevelsFor(report) {
         for (const entry of project.log) {
           if (entry.report?.id === report.id) {
             entry.report.audio = stats;
+            if (tempo) entry.report.tempo.measured = tempo;
             entry.observations = report.observations.map((o) => ({
               id: o.id, ruleId: o.ruleId, severity: o.severity, title: o.title, detail: o.detail,
             }));
             entry.summary.peakDbfs = stats.peakDbfs;
+            if (tempo?.established) {
+              entry.summary.measuredBpm = tempo.bpm;
+              entry.summary.tempoConfidence = tempo.confidence;
+              entry.summary.tempoSteady = tempo.steady;
+            }
             actions.markDirty();
           }
         }
@@ -243,8 +250,9 @@ async function measureAllLevels() {
     try {
       const file = state.files.get(report.id);
       if (!file) throw new Error('file no longer available');
-      const stats = await decodeAndMeasure(file, report);
+      const { stats, tempo } = await decodeAndMeasure(file, report);
       report.audio = stats;
+      if (tempo) report.tempo.measured = tempo;
       report.observations = runRules(report);
     } catch {
       failed++;
@@ -442,6 +450,15 @@ async function runInspection(entries, sourceLabel) {
     }
   }
 
+  // Second pass: decode what has to be decoded.
+  //
+  // An uncompressed file already produced its levels and its tempo from the
+  // scan above, with no decoding at all. A compressed one cannot: its samples
+  // do not exist until a decoder has made them. This is where the app stops
+  // being a pure reader, and it says so in the progress line rather than doing
+  // it quietly.
+  await decodePass(reports, { fill, text });
+
   fill.style.width = '100%';
   progress.hidden = true;
   text.textContent = '';
@@ -466,6 +483,45 @@ async function runInspection(entries, sourceLabel) {
 
   state.view = 'inspect';
   render();
+}
+
+/**
+ * Decode every file in a batch that needs decoding, folding levels and tempo
+ * into its report.
+ *
+ * A failure here is never fatal to the check. Everything else in the report was
+ * read from the file itself and stands on its own; a codec this browser will
+ * not decode costs the levels and the tempo, and nothing else.
+ */
+async function decodePass(reports, { fill, text }) {
+  const candidates = reports.filter((r) => decodeAvailability(r).offer);
+  if (!candidates.length) return;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const report = candidates[i];
+    fill.style.width = `${(i / candidates.length) * 100}%`;
+    text.textContent = `Decoding ${i + 1} of ${candidates.length} for levels and tempo: ${report.file.name}`;
+    await new Promise((r) => setTimeout(r, 0));
+
+    try {
+      const file = state.files.get(report.id);
+      if (!file) continue;
+      const { stats, tempo } = await decodeAndMeasure(file, report);
+      report.audio = stats;
+      if (tempo) report.tempo.measured = tempo;
+      report.observations = runRules(report);
+    } catch (err) {
+      // Record why, on the report, so the reader is not left wondering where
+      // the levels went.
+      report.tempo.measured = {
+        established: false,
+        bpm: null,
+        reason: `This file could not be decoded, so its tempo could not be worked out: ${err.message}`,
+        range: null,
+        limits: [],
+      };
+    }
+  }
 }
 
 // -------------------------------------------------------------------- files
