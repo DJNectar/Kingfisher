@@ -50,6 +50,19 @@ usually goes wrong.
 To change the icon, replace `icon-source.png` (a square RGBA PNG, 1024px or
 larger) and re-run the script.
 
+### Hand-drawn sizes
+
+Drop an `icon-source-32.png`, `icon-source-64.png` (and so on) beside the
+master and the script uses it verbatim for that size instead of scaling the
+master down.
+
+This is worth doing for 32 and 64 and nowhere else. No resampler can fix "too
+much information for the canvas": at 32 pixels there are barely a thousand of
+them, and detailed artwork has more shapes than that can hold, so all an
+algorithm can do is average them together. The fix is a simpler drawing —
+fewer shapes, heavier lines, fine detail dropped rather than shrunk. Good icon
+sets are drawn at several sizes, not scaled from one.
+
 ## What this does NOT fix
 
 **Gatekeeper.** An unsigned `.app` gets the same "Apple could not verify…"

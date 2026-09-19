@@ -235,6 +235,24 @@ if __name__ == '__main__':
 
     chunks = []
     for kind, size, amount in ICNS_SIZES:
+        # A hand-drawn version for this size wins, if one exists.
+        #
+        # No resampler can fix "too much information for the canvas". At 32
+        # pixels there are barely a thousand of them, and the artwork has three
+        # overlapping wing layers, a waveform, a reflection and a splash; all
+        # an algorithm can do with that is average it. A designer solves it by
+        # drawing a simpler picture — fewer shapes, heavier bill, the waveform
+        # reduced to a line. Good icon sets are drawn at several sizes rather
+        # than scaled from one.
+        override = HERE / f'icon-source-{size}.png'
+        if override.exists():
+            ow, oh, orgba = read_png(override)
+            if (ow, oh) != (size, size):
+                orgba = resize(ow, oh, orgba, size)
+            chunks.append((kind, write_png(size, size, orgba)))
+            print(f'  {size:>4}px  from {override.name}')
+            continue
+
         scaled = sharpen(size, resize(width, height, rgba, size), amount)
         chunks.append((kind, write_png(size, size, scaled)))
         print(f'  {size:>4}px  sharpen {amount:.2f}')
