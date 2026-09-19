@@ -80,6 +80,15 @@ const COLUMNS = [
     ? (r.audio.source === 'decoded' ? `decoded (${r.audio.decodedBy ?? 'browser'})` : "the file's own samples")
     : null)],
 
+  // Loudness. Integrated, range and true peak each get a column because each
+  // answers a different question, and a delivery log is exactly where someone
+  // sorts by one of them.
+  ['Integrated loudness (LUFS)', (r) => round(r.loudness?.measured ? r.loudness.integrated : null, 2)],
+  ['Loudness range (LU)', (r) => round(r.loudness?.measured ? r.loudness.range : null, 2)],
+  ['True peak (dBTP)', (r) => dbfs(r.loudness?.measured ? r.loudness.truePeak : null)],
+  ['Short-term max (LUFS)', (r) => round(r.loudness?.measured ? r.loudness.shortTermMax : null, 2)],
+  ['Momentary max (LUFS)', (r) => round(r.loudness?.measured ? r.loudness.momentaryMax : null, 2)],
+
   // Tempo. The stated and the measured stay in separate columns on purpose: a
   // spreadsheet is exactly where you would want to sort a delivery by the gap
   // between what a file claims and what it turned out to be.
@@ -141,6 +150,9 @@ export function historyToCsv(rowsIn) {
       put('Duration (h:mm:ss)', clock(s.durationSeconds));
       put('Codec', s.codec);
       put('Peak (dBFS)', dbfs(s.peakDbfs));
+      put('Integrated loudness (LUFS)', round(s.integratedLufs, 2));
+      put('Loudness range (LU)', round(s.loudnessRange, 2));
+      put('True peak (dBTP)', dbfs(s.truePeakDbtp));
       put('Measured BPM', round(s.measuredBpm, 2));
       put('Stated BPM', s.statedBpm);
       put('Origin flag', originFlagLabel(s.originFlag));

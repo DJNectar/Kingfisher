@@ -57,6 +57,29 @@ function channel(index, name, peakDbfs, extra = {}) {
   };
 }
 
+/**
+ * A loudness block, shaped as the measurement produces one. Defaults sit safely
+ * below full scale so that a case has to ask for an over to get one.
+ */
+function fakeLoudness(overrides = {}) {
+  const truePeak = overrides.truePeak ?? -1.2;
+  return {
+    measured: true, standard: 'ITU-R BS.1770-4',
+    integrated: -14.2, integratedReason: null,
+    range: 6.4, rangeReason: null, rangeLow: -18, rangeHigh: -11.6,
+    momentaryMax: -9.1, shortTermMax: -10.4,
+    truePeak, samplePeak: -1.5, truePeakLinear: 10 ** (truePeak / 20),
+    truePeakExceedsSample: true, overSampling: 8,
+    gatedBlocks: 800, totalBlocks: 900,
+    excludedChannels: [], seconds: 10, frames: 480000, limits: [],
+    ...overrides,
+    channels: overrides.channels ?? [
+      { index: 0, name: 'FL', truePeakDbtp: truePeak, samplePeakDbfs: -1.5 },
+      { index: 1, name: 'FR', truePeakDbtp: truePeak - 0.3, samplePeakDbfs: -1.7 },
+    ],
+  };
+}
+
 function deepMerge(target, source) {
   for (const [k, v] of Object.entries(source)) {
     if (v && typeof v === 'object' && !Array.isArray(v) && target[k] && typeof target[k] === 'object' && !Array.isArray(target[k])) {
@@ -257,6 +280,11 @@ test('no rule ever judges the file against a target, on any input', () => {
     fakeReport({ audio: fakeAudio({ complete: false, coverage: 0.1 }) }),
     fakeReport({ audio: { measured: false, reason: 'not PCM' } }),
     fakeReport({ format: { codecFamily: 'pcm-float' }, audio: fakeAudio({ peak: 1.5, peakDbfs: 3.5 }) }),
+    // Loudness: an inter-sample over with the samples themselves safely below
+    // full scale, and the same over with the samples already past it.
+    fakeReport({ loudness: fakeLoudness({ truePeak: 0.8 }) }),
+    fakeReport({ loudness: fakeLoudness({ truePeak: 1.4, samplePeak: 0.2 }) }),
+    fakeReport({ loudness: fakeLoudness() }),
     fakeReport({ parse: { status: PARSE_STATUS.PARTIAL, errors: [{ message: 'x' }] } }),
     fakeReport({ parse: { status: PARSE_STATUS.FAILED, errors: [{ message: 'x' }] } }),
     fakeReport({ parse: { warnings: [{ message: 'a note' }] } }),
@@ -297,4 +325,22 @@ test('every rule declares an id and a severity', () => {
     assert.equal(typeof rule.evaluate, 'function');
   }
   assert.equal(new Set(RULES.map((r) => r.id)).size, RULES.length, 'rule ids must be unique');
+});
+
+test('an inter-sample over is reported as a fact about the file', () => {
+  // Every sample below full scale, the reconstructed waveform above it. This
+  // is the finding no amount of looking at sample values can produce.
+  const observations = runRules(fakeReport({
+    loudness: fakeLoudness({ truePeak: 0.8, samplePeak: -0.4 }),
+  }));
+  const found = observations.find((o) => o.id === 'true-peak-over');
+  assert.ok(found, 'expected a true-peak observation');
+  assert.match(found.detail, /between them/);
+  // It says what the file does, not what anyone ought to do about it.
+  assert.doesNotMatch(`${found.title} ${found.detail}`, /reduce|lower|limiter|ceiling of/i);
+});
+
+test('a true peak below full scale produces no observation', () => {
+  const observations = runRules(fakeReport({ loudness: fakeLoudness({ truePeak: -0.2 }) }));
+  assert.equal(observations.find((o) => o.id === 'true-peak-over'), undefined);
 });

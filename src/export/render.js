@@ -16,6 +16,7 @@ import {
   formatBitDepth,
   formatChannels,
   formatDbfs,
+  formatSignedDb,
   formatTimestamp,
   UNKNOWN,
 } from '../core/format.js';
@@ -105,6 +106,7 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
     }
 
     lines.push(...renderLevels(report));
+    lines.push(...renderLoudness(report));
     lines.push(...renderTempo(report));
     lines.push(...renderKey(report));
   }
@@ -211,6 +213,70 @@ function renderLevels(report) {
       }   ${(c.dcOffset * 100).toFixed(4)}%${c.digitalSilence ? '   (silent)' : ''}`,
     );
   }
+  return lines;
+}
+
+/**
+ * Loudness, in the export as on screen. No target appears here either: the
+ * printed report is the thing that gets emailed to a client, which is exactly
+ * where a made-up pass mark would do the most damage.
+ */
+function renderLoudness(report) {
+  const l = report.loudness;
+  if (!l) return [];
+
+  const lines = [];
+  lines.push(section('LOUDNESS'));
+
+  if (!l.measured) {
+    lines.push(row('Loudness', 'not measured'));
+    lines.push(row('Why not', l.reason));
+    return lines;
+  }
+
+  lines.push(row(
+    'Integrated',
+    l.integrated !== null ? `${l.integrated.toFixed(2)} LUFS` : 'not established',
+  ));
+  if (l.integrated === null && l.integratedReason) lines.push(row('Why not', l.integratedReason));
+
+  lines.push(row(
+    'Loudness range',
+    l.range !== null ? `${l.range.toFixed(2)} LU` : 'not established',
+  ));
+  if (l.range === null && l.rangeReason) lines.push(row('Why not', l.rangeReason));
+
+  if (Number.isFinite(l.shortTermMax)) lines.push(row('Loudest 3 seconds', `${l.shortTermMax.toFixed(2)} LUFS`));
+  if (Number.isFinite(l.momentaryMax)) lines.push(row('Loudest 400 ms', `${l.momentaryMax.toFixed(2)} LUFS`));
+
+  lines.push(row('True peak', `${formatSignedDb(l.truePeak, 2)} dBTP`));
+  lines.push(row('Sample peak', `${formatSignedDb(l.samplePeak, 2)} dBFS`));
+  lines.push(row('How', `${l.standard} K-weighting, reconstructed at ${l.overSampling}\u00d7 for the peak`));
+
+  if (l.truePeakExceedsSample) {
+    lines.push('');
+    lines.push(`  The reconstructed waveform runs ${(l.truePeak - l.samplePeak).toFixed(2)} dB above the loudest`);
+    lines.push('  stored sample. That gap lives between the samples, so nothing in the');
+    lines.push("  file's own values shows it.");
+  }
+
+  if (l.channels.length > 1) {
+    lines.push('');
+    lines.push(`  ${'Channel'.padEnd(10)}${'True peak'.padStart(14)}${'Sample peak'.padStart(14)}`);
+    for (const c of l.channels) {
+      lines.push(
+        `  ${c.name.padEnd(10)}${`${formatSignedDb(c.truePeakDbtp, 2)} dBTP`.padStart(14)}${
+          `${formatSignedDb(c.samplePeakDbfs, 2)} dBFS`.padStart(14)
+        }`,
+      );
+    }
+  }
+
+  if (l.limits?.length) {
+    lines.push('');
+    for (const limit of l.limits) lines.push(`  ${limit}`);
+  }
+
   return lines;
 }
 

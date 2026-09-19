@@ -91,6 +91,50 @@ it took, so a scanned reading is never confused with a decoded one. A file past
 the memory guard is left alone, and the report says why rather than taking the
 browser down.
 
+### Loudness
+
+Integrated loudness, loudness range and true peak, to ITU-R BS.1770-4 and EBU
+Tech 3342. Peak says whether a file will clip; it says almost nothing about how
+loud it sounds, and every delivery spec in music, broadcast and podcasting is
+written in LUFS rather than dBFS.
+
+- **Integrated loudness (LUFS)** — the whole file, K-weighted, with the
+  standard's two gates applied. The gating is the part that makes the number
+  useful: without it a track with long quiet passages measures as though the
+  silence were part of the performance.
+- **Loudness range (LU)** — the spread between the loud parts and the quiet
+  parts of the same piece, taken at percentiles so that one cymbal crash and
+  one fade-out do not define it.
+- **True peak (dBTP)** — where the waveform actually goes between the samples.
+- **Loudest 400 ms and loudest 3 seconds**, and true and sample peak per
+  channel.
+
+True peak is the one level finding that cannot be reached by looking at sample
+values at all. Between any two samples the signal is not a straight line — it
+is whatever a converter's reconstruction filter makes of them, and that curve
+can rise above both. A file whose every sample sits at -0.5 dBFS can still
+drive playback to +2.9 dBTP, and nothing in the file's own values shows it.
+Kingfisher reconstructs at eight times the file's sample rate, which is twice
+what BS.1770 requires: at four times the limit on accuracy is no longer the
+filter — every sensible filter design measures the same — but how finely the
+reconstructed curve is being looked at, and under-reading is the dangerous
+direction, because it hides an over rather than inventing one.
+
+The multichannel rules are the standard's: surround channels are weighted
+slightly higher, and the LFE channel is excluded entirely rather than folded in.
+
+**Verified against ground truth.** EBU Tech 3341 and 3342 publish test signals
+together with the reading a conforming meter must produce, and Kingfisher is
+tested against all nine — the calibration cases, the absolute and relative
+gating cases, and the four loudness-range cases — plus true-peak signals whose
+inter-sample maxima are known analytically. This is the only part of the app
+with an actual right answer to check against; tempo and key had to be verified
+sideways, because nobody publishes the true tempo of a live recording.
+
+**And no targets.** The report says -9.4 LUFS, 6.1 LU, +0.8 dBTP, and stops.
+What any particular platform wants is a target, and comparing a file to one
+would be judging it.
+
 ### Tempo
 
 Every report carries a tempo, in two strictly separate halves:
@@ -130,7 +174,7 @@ being walked to measure the levels, so the file never has to be decoded.
 
 ### Observations
 
-28 rules produce plain-language notes about the file: truncated data, a
+29 rules produce plain-language notes about the file: truncated data, a
 container size that disagrees with its contents, a non-standard sample rate or
 bit depth, valid bits that differ from the stored depth, a channel mask that
 disagrees with the channel count, a byte rate that doesn't add up, zero or very

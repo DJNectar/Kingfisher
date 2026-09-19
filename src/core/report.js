@@ -175,6 +175,17 @@ export function createReport(file = {}) {
      */
     key: null,
 
+    /**
+     * Loudness, to ITU-R BS.1770-4 and EBU Tech 3342: integrated LUFS, the
+     * loudness range, and the true peak found by reconstructing the waveform
+     * between its samples.
+     *
+     * These are measurements, not marks. The report says the file is -9.4 LUFS
+     * and reaching +0.8 dBTP; it does not say whether that suits wherever the
+     * file is going, because it does not know and is not asked.
+     */
+    loudness: null,
+
     /** Factual notes produced by the observation rules. Never comparisons. */
     observations: [],
 
@@ -256,6 +267,16 @@ export function summarizeReport(report) {
     keySignature: report.key?.established ? report.key.signature.name : null,
     keyName: report.key?.established ? report.key.name : null,
     keyConfidence: report.key?.established ? report.key.confidence : null,
+
+    /*
+     * Loudness, carried in the summary for the same reason as tempo and the
+     * origin flag: the history CSV and the list views read the summary, and
+     * "which of these came in hot?" is a question a delivery log gets asked
+     * constantly.
+     */
+    integratedLufs: report.loudness?.measured ? report.loudness.integrated : null,
+    loudnessRange: report.loudness?.measured ? report.loudness.range : null,
+    truePeakDbtp: report.loudness?.measured ? report.loudness.truePeak : null,
 
     originFlag: report.provenance?.assessment?.flag ?? null,
     originConfidence: report.provenance?.assessment?.confidence ?? null,

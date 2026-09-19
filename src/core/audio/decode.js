@@ -29,6 +29,7 @@
 import { measureFloatChannels } from './measure.js';
 import { estimateTempo } from './tempo.js';
 import { estimateKey } from './key.js';
+import { measureLoudness } from './loudness.js';
 
 /** Bytes of decoded audio we are willing to hold. 400 MB ≈ 40 stereo minutes. */
 export const MAX_DECODED_BYTES = 400 * 1024 * 1024;
@@ -155,7 +156,7 @@ export function decoderName() {
 /**
  * Decode a file and measure it.
  *
- * Levels, tempo and key all come out of the one decode. Decoding is by far the
+ * Levels, loudness, tempo and key all come out of the one decode. Decoding is by far the
  * expensive part; once the samples are in hand, reading a tempo off them costs
  * a fraction of what getting them cost, so doing it twice would be the only
  * wasteful choice available.
@@ -214,5 +215,12 @@ export async function decodeAndMeasure(file, report) {
     stats,
     tempo: estimateTempo(channelData, { sampleRate: audio.sampleRate }),
     key: estimateKey(channelData, { sampleRate: audio.sampleRate }),
+    // Measured on the DECODED signal, which is the point: a lossy encoder can
+    // push the reconstructed waveform past full scale even when what went in
+    // did not, and that over exists nowhere in the file's own bytes.
+    loudness: measureLoudness(channelData, {
+      sampleRate: audio.sampleRate,
+      channelNames: report.format.layoutChannels,
+    }),
   };
 }

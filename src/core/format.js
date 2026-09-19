@@ -80,6 +80,20 @@ export function formatDbfs(db, digits = 2) {
   return `${db >= 0 ? '+' : ''}${db.toFixed(digits)} dBFS`;
 }
 
+/**
+ * A loudness or true-peak figure, signed.
+ *
+ * The sign is not decoration. "+0.4 dBTP" and "0.4 dBTP" look alike at a
+ * glance and mean opposite things, and above full scale is exactly the case a
+ * reader must not skim past.
+ */
+export function formatSignedDb(db, digits = 1) {
+  if (db === null || db === undefined || Number.isNaN(db)) return UNKNOWN;
+  if (db === -Infinity) return '-\u221e';
+  const v = db.toFixed(digits);
+  return db > 0 ? `+${v}` : v;
+}
+
 export function formatTimestamp(iso) {
   if (!iso) return UNKNOWN;
   const d = new Date(iso);

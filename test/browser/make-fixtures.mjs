@@ -124,6 +124,31 @@ w('11 plain.mp3', F.mp3File({
   ]));
 }
 
+// A file whose every sample sits below full scale while the waveform between
+// them goes above it.
+//
+// purpose: this is the one level finding that cannot be reached by looking at
+// sample values, so it is the one that proves the true-peak path is real and
+// not just arithmetic on the peak already known. A sine at exactly a quarter
+// of the sample rate, offset 45 degrees, puts every sample at 0.7071 of the
+// amplitude and never once on the crest.
+{
+  const rate = 44100;
+  const frames = rate * 4;
+  // Samples land at -0.5 dBFS; the crest they straddle is about +2.5 dBTP.
+  const amp = 10 ** (-0.5 / 20) / Math.SQRT1_2;
+  w('13 intersample-over.wav', F.riff([
+    F.fmtChunk({ sampleRate: rate, channels: 2, bitsPerSample: 24 }),
+    F.listInfoChunk({ INAM: 'Inter-sample over' }),
+    F.chunk('data', F.pcmData({
+      frames,
+      channels: 2,
+      bitsPerSample: 24,
+      gen: (i) => amp * Math.cos((Math.PI * i) / 2 + Math.PI / 4),
+    })),
+  ]));
+}
+
 // A non-audio file, to prove folder scans skip them
 writeFileSync(`${dir}/notes.txt`, 'not audio');
 console.log('fixtures written to', dir);

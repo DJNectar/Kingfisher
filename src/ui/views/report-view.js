@@ -23,6 +23,7 @@ import {
   formatBitDepth,
   formatChannels,
   formatDbfs,
+  formatSignedDb,
   formatTimestamp,
   UNKNOWN,
 } from '../../core/format.js';
@@ -87,6 +88,8 @@ export function renderReportCard(report, {
     if (tempo) body.append(tempo);
     const key = keySection(report, !expandAll);
     if (key) body.append(key);
+    const loudness = loudnessSection(report, !expandAll);
+    if (loudness) body.append(loudness);
     const meta = metadataSections(report, !expandAll);
     for (const s of meta) body.append(s);
     body.append(chunkSection(report));
@@ -268,6 +271,29 @@ function factStrip(report) {
     facts.push(['Peak', null, 'not measured']);
   }
 
+  // Loudness and true peak. These are the two numbers a delivery engineer
+  // looks for first, and neither can be read off the header — both cost a pass
+  // over the samples, so they sit beside the peak rather than replacing it.
+  const loud = report.loudness;
+  if (loud?.measured && loud.integrated !== null) {
+    facts.push([
+      'Loudness',
+      loud.integrated.toFixed(1),
+      loud.range !== null
+        ? `LUFS integrated \u00b7 ${loud.range.toFixed(1)} LU range`
+        : 'LUFS integrated',
+    ]);
+  } else if (loud?.measured) {
+    facts.push(['Loudness', null, 'not established']);
+  }
+  if (loud?.measured && Number.isFinite(loud.truePeak)) {
+    facts.push([
+      'True peak',
+      formatSignedDb(loud.truePeak, 2),
+      `dBTP${loud.truePeak > 0 ? ' \u00b7 above full scale' : ''}`,
+    ]);
+  }
+
   // The tempo tile, and the one place in this strip where the note under the
   // number is doing real work. Every other tile holds something read out of the
   // file; this one holds an estimate, and sitting in the same row it would
@@ -403,6 +429,93 @@ function measureOffer(report, onMeasureLevels) {
  * the disagreement is shown rather than resolved — a tag that says 100 over a
  * performance at 128 is a fact about the file worth seeing.
  */
+/**
+ * The loudness section.
+ *
+ * Integrated loudness leads because it is the number everything else is
+ * discussed relative to. True peak sits directly under it with the sample peak
+ * beside it, because the gap between those two is the whole reason true peak is
+ * worth measuring, and showing one without the other hides it.
+ *
+ * No target appears anywhere here, and none is implied. The section reports
+ * what the file measures and stops.
+ */
+function loudnessSection(report, collapsed) {
+  const l = report.loudness;
+  if (!l) return null;
+
+  const body = el('div', {});
+
+  if (!l.measured) {
+    body.append(kv([['Loudness', 'not measured'], ['Why not', l.reason]]));
+    return section('Loudness', body, { open: !collapsed });
+  }
+
+  const rows = [];
+  rows.push([
+    'Integrated',
+    l.integrated !== null ? `${l.integrated.toFixed(2)} LUFS` : 'not established',
+  ]);
+  if (l.integrated === null && l.integratedReason) rows.push(['Why not', l.integratedReason]);
+
+  rows.push([
+    'Loudness range',
+    l.range !== null ? `${l.range.toFixed(2)} LU` : 'not established',
+  ]);
+  if (l.range === null && l.rangeReason) rows.push(['Why not', l.rangeReason]);
+
+  if (l.shortTermMax !== null && Number.isFinite(l.shortTermMax)) {
+    rows.push(['Loudest 3 seconds', `${l.shortTermMax.toFixed(2)} LUFS`]);
+  }
+  if (l.momentaryMax !== null && Number.isFinite(l.momentaryMax)) {
+    rows.push(['Loudest 400 ms', `${l.momentaryMax.toFixed(2)} LUFS`]);
+  }
+
+  rows.push(['True peak', `${formatSignedDb(l.truePeak, 2)} dBTP`]);
+  rows.push(['Sample peak', `${formatSignedDb(l.samplePeak, 2)} dBFS`]);
+
+  if (l.gatedBlocks !== null) {
+    rows.push([
+      'Blocks averaged',
+      `${l.gatedBlocks.toLocaleString('en-US')} of ${l.totalBlocks.toLocaleString('en-US')} \u2014 the rest fell below the gate and were left out, as the standard requires`,
+    ]);
+  }
+  rows.push(['How', `${l.standard} K-weighting, reconstructed at ${l.overSampling}\u00d7 for the peak`]);
+
+  body.append(kv(rows));
+
+  // The gap between the stored samples and the reconstructed waveform. Where
+  // it is wide, it is the finding, so it gets said in words as well as numbers.
+  if (l.truePeakExceedsSample) {
+    const gap = l.truePeak - l.samplePeak;
+    body.append(el('p', {
+      class: 'muted',
+      text: `The reconstructed waveform runs ${gap.toFixed(2)} dB above the loudest stored sample. That gap lives between the samples, so nothing in the file's own values shows it.`,
+    }));
+  }
+
+  if (l.channels.length > 1) {
+    body.append(el('h4', { text: 'Peaks per channel' }));
+    body.append(table(
+      ['Channel', { label: 'True peak (dBTP)', class: 'num' }, { label: 'Sample peak (dBFS)', class: 'num' }],
+      l.channels.map((c) => [
+        c.name,
+        formatSignedDb(c.truePeakDbtp, 2),
+        formatSignedDb(c.samplePeakDbfs, 2),
+      ]),
+    ));
+  }
+
+  if (l.limits?.length) {
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'What this measurement covers. ' }),
+      l.limits.join(' '),
+    ]));
+  }
+
+  return section('Loudness', body, { open: !collapsed });
+}
+
 function tempoSection(report, collapsed) {
   const measured = report.tempo?.measured;
   const stated = report.tempo?.stated;

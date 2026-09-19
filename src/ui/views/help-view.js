@@ -33,6 +33,7 @@ export function renderHelp(host) {
         ['provenance', 'Where a file came from'],
         ['checking', 'Checking a file or folder'],
         ['reading', 'Reading the results'],
+        ['loudness', 'Loudness and true peak'],
         ['tempo', 'Tempo'],
         ['key', 'Key'],
         ['clients', 'Clients and projects'],
@@ -52,6 +53,7 @@ export function renderHelp(host) {
         'The channel layout — which speaker each channel is meant for, when the file says so. When it does not say, Kingfisher tells you it is assuming the usual order rather than pretending to know.',
         'Embedded metadata: the Broadcast Wave (bext) description, originator, date and timecode; iXML from field recorders including scene, take and track names; and the older INFO tags like title and artist.',
         'Measured levels: peak and RMS for the file and for each channel, where the loudest moment is, and whether any channel is silent.',
+        'Loudness in LUFS, loudness range in LU and true peak in dBTP \u2014 the numbers delivery specs are written in, and the one reading that can show a file going above full scale when none of its samples do.',
         'A full list of every chunk in the file, including the ones Kingfisher does not decode — so you can see that nothing is being hidden from you.',
       ]),
       el('h4', { text: 'Which files it reads' }),
@@ -161,6 +163,26 @@ export function renderHelp(host) {
         'Several generators mark their output with a watermark buried in the sound itself rather than in the metadata. Kingfisher reads files; it cannot detect those, and doing so needs the software of whoever applied them.',
       ]),
       el('p', { class: 'muted', text: 'In short: this section is a useful place to look, and never a verdict. It is here so you can see what a file claims, and decide for yourself what that is worth.' }),
+
+      // ------------------------------------------------------------------
+      // ------------------------------------------------------------------
+      h3('loudness', 'Loudness and true peak'),
+      el('p', { text: 'Peak tells you whether a file will clip. It tells you very little about how loud it sounds \u2014 two masters with identical peaks can be eight decibels apart to the ear. Loudness is the measurement that answers that question, and it is what every delivery spec in music, broadcast and podcasting is actually written in.' }),
+      ul([
+        el('span', {}, [el('strong', { text: 'Integrated loudness, in LUFS' }), ' \u2014 the whole file as one number. Quiet passages are gated out of the average, so a track with a long intro measures as the performance rather than as the silence around it.']),
+        el('span', {}, [el('strong', { text: 'Loudness range, in LU' }), ' \u2014 the distance between the loud parts and the quiet parts of the same piece. A heavily compressed master reads low, a dynamic one reads high. It is a description, not a score.']),
+        el('span', {}, [el('strong', { text: 'True peak, in dBTP' }), ' \u2014 where the waveform actually goes between the samples.']),
+        el('span', {}, [el('strong', { text: 'Loudest 400 milliseconds and loudest 3 seconds' }), ' \u2014 the short-window peaks of loudness, for finding the hottest moment rather than the average.']),
+      ]),
+      el('p', {}, [
+        el('strong', { text: 'Why true peak is not the same as peak. ' }),
+        'Between any two samples the signal is not a straight line. It is a curve, and the converter in a set of speakers reconstructs that curve when it plays the file. The curve can rise above both of the samples it sits between \u2014 so a file whose every single sample is below full scale can still push playback past it. Nothing in the file\u2019s own numbers shows this. Kingfisher rebuilds the curve at eight times the file\u2019s sample rate and reports where it actually goes, with the sample peak shown next to it so you can see the gap.',
+      ]),
+      el('p', {}, [
+        el('strong', { text: 'There is no target here, on purpose. ' }),
+        'Kingfisher will tell you a file is -9.4 LUFS and reaches +0.8 dBTP. It will not tell you whether that is right, because that depends entirely on where the file is going, and the same master can be correct for one destination and wrong for the next. The numbers are yours to judge.',
+      ]),
+      el('p', { class: 'muted', text: 'The measurements follow ITU-R BS.1770-4 and EBU Tech 3342, and are tested against the published compliance signals those documents provide \u2014 signals with a known correct reading, which is the only part of this app that has one.' }),
 
       // ------------------------------------------------------------------
       // ------------------------------------------------------------------

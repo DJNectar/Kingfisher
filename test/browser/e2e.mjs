@@ -459,6 +459,47 @@ step('Tempo: measured, stated, and refused');
   await page.screenshot({ path: join(HERE, 'shot-tempo.png'), fullPage: false });
 }
 
+step('Loudness: LUFS, range, and an over that is not in any sample');
+{
+  await page.click('.tab[data-view="inspect"]');
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([join(AUDIO, '13 intersample-over.wav')]);
+  await dontLog(page);
+  await page.waitForTimeout(4000);
+
+  const card = page.locator('.report').first();
+  const tiles = await card.locator('.facts').innerText();
+  expect('a loudness tile is shown', /LOUDNESS/i, tiles);
+  expect('it is given in LUFS', /LUFS/, tiles);
+  expect('a true peak tile is shown', /TRUE PEAK/i, tiles);
+  expect('the true peak is above full scale', /\+\d/, tiles);
+
+  const loudSection = card.locator('.detail-section:has-text("Loudness")').first();
+  if ((await loudSection.getAttribute('open')) === null) {
+    await loudSection.locator('summary').click();
+    await page.waitForTimeout(300);
+  }
+  const loud = (await loudSection.locator('.detail-body').innerText()).replace(/\n/g, ' ');
+
+  expect('integrated loudness is reported', /Integrated\s*-?\d+\.\d+ LUFS/, loud);
+  expect('the loudness range is reported', /Loudness range\s*\d+\.\d+ LU/, loud);
+  expect('true peak is reported in dBTP', /True peak\s*\+\d+\.\d+ dBTP/, loud);
+  expect('the sample peak is shown beside it', /Sample peak\s*-\d+\.\d+ dBFS/, loud);
+  expect('the gap between them is spelled out', /above the loudest stored sample/i, loud);
+  expect('the method is named', /BS\.1770/, loud);
+  expect('peaks are broken out per channel', /FL/, loud);
+
+  // The finding itself, in the observation list where it belongs.
+  const observations = await card.locator('.observations, .obs-list').first().innerText()
+    .catch(() => card.innerText());
+  expect('the over is reported as an observation', /between samples/i, observations);
+  // And no verdict anywhere about whether any of this is acceptable.
+  expect('no target is stated', /^(?!.*\b(too loud|should be|target level)\b).*$/is, loud);
+
+  await page.screenshot({ path: join(HERE, 'shot-loudness.png'), fullPage: false });
+}
+
 console.log('\n=== RESULT ===');
 console.log('page errors:', errors.length ? errors.join('\n') : 'none');
 console.log('failed assertions:', failures.length ? failures.join(', ') : 'none');

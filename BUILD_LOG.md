@@ -200,11 +200,6 @@ fragile of the two. Full run, all passing:
 - **AIFF/FLAC/MP3.** Architected for (magic-number registry, format-agnostic
   report model, endianness flag already on `Reader`) but not implemented. The
   brief asked for WAV first and for the architecture not to require a rewrite.
-- **True-peak (inter-sample) measurement.** Needs oversampling; the current
-  peak is sample-peak and is labelled as such rather than implying more.
-- **Loudness (LUFS) measurement.** `bext` loudness fields are *read and shown*
-  where present, but nothing is measured — that needs a K-weighting filter and
-  gating, and guessing at it would violate the app's core rule.
 - **RIFX (big-endian RIFF).** Detected and explicitly refused rather than
   misread. Supporting it is a flag on `Reader`, but there was no reference file
   to verify against, and shipping unverified byte-order handling is exactly how
@@ -730,3 +725,80 @@ The transposition and degradation tests prove the machinery tracks pitch and
 survives drums, noise and clipping. Neither proves a hit rate.
 
 **237 unit tests, 52 browser assertions, all passing.**
+
+---
+
+## Loudness: the first measurement with an actual right answer
+
+LUFS, loudness range and true peak had been deferred twice on the grounds that
+they were real DSP. They were also the reason a delivery engineer would not
+take the app seriously: peak tells you whether a file clips and almost nothing
+about how loud it sounds, and every delivery spec that exists is written in
+LUFS.
+
+What made this different from tempo and key is that **it can be checked**. EBU
+Tech 3341 and 3342 publish test signals together with the reading a conforming
+meter must produce. Tempo had to be verified sideways, by transposing audio and
+watching the answer move; key by wrecking known material and seeing what
+survived. Loudness has ground truth, so it is tested against it: all nine
+compliance cases — the two calibration tones, the absolute-gate and
+relative-gate sequences, the near-the-gate trap, and the four range cases —
+plus true-peak signals whose inter-sample maxima are known analytically.
+
+All nine passed on the first run, which was suspicious enough to go looking.
+They passed because the filter is derived rather than copied: BS.1770 tabulates
+K-weighting coefficients for 48 kHz only, and using those at 44.1 kHz — the
+rate most music actually arrives at — puts the filter's corners in the wrong
+place and biases every reading. Deriving the analogue prototype through the
+bilinear transform per sample rate reproduces the published table exactly at 48
+kHz, which is what the test asserts.
+
+33. **Four times oversampling is not limited by the filter.** The first
+    true-peak implementation was tuned by comparing interpolator designs — 12,
+    16, 24, 32 taps per phase, Kaiser betas from 6 to 12 — and every single
+    design bottomed out at exactly the same worst-case error of -0.301 dB.
+    An error that ignores the filter entirely is not a filter error. -0.301 dB
+    is cos(pi/12), and pi/12 is half the spacing of a four-times grid at 16 kHz
+    in a 48 kHz file. The limit was never the reconstruction; it was that the
+    reconstructed curve was only being LOOKED AT four times per sample, so a
+    peak falling between two of those points was missed.
+
+    Eight times cuts that to 0.07 dB. Under-reading is the dangerous direction
+    here — it hides an over rather than inventing one — so the extra pass is
+    worth paying for. It costs about what tempo already costs on the same
+    audio, which was the bar it had to clear.
+
+34. **A test caught the case its own comment predicted.** "True peak never
+    reads below the sample peak" looked like a formality: the reconstructed
+    waveform passes through every sample, so it cannot be quieter than the
+    loudest of them. At 15 kHz it failed, reading -6.033 against a sample peak
+    of -6.000.
+
+    The polyphase grid lands at fixed fractional offsets between one sample and
+    the next, and none of those offsets is zero — it never evaluates the curve
+    at a sample instant at all. Near the top of the band, where a cycle spans
+    three or four samples, that is enough to report a peak below a sample the
+    curve demonstrably passes through. The samples are exact points on the same
+    curve, so they are folded into the maximum. Not a fudge: using known exact
+    values of the thing being estimated.
+
+    A true peak under the sample peak is not a rounding question. It is
+    impossible, and printing it would undermine the single comparison the whole
+    measurement exists to support.
+
+35. **A jump cut reconstructs as a spike.** Very large files are read as
+    evenly spaced probes rather than end to end, and tempo and key already
+    refuse that input because the joins between probes are not time. Loudness
+    refuses it too, and for a second reason of its own: the seam between two
+    probes is a step discontinuity, and an oversampling true-peak detector
+    rings on a step. It would report an inter-sample over that exists nowhere
+    in the audio — only in the join between two pieces of it.
+
+**And still no targets.** This was the most tempting place in the app to break
+its own rule, because everyone knows what Spotify wants and it would have been
+one line. The report says -9.4 LUFS, 6.1 LU, +0.8 dBTP and stops. A test
+asserts that the loudness result contains no platform name, no "too loud", no
+target and no verdict, alongside the older test that holds every observation
+rule to the same standard.
+
+**270 unit tests, 65 browser assertions, all passing.**

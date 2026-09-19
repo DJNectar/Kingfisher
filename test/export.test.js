@@ -80,6 +80,48 @@ test('a text report never compares the file to a target spec', async () => {
   }
 });
 
+test('a text report carries loudness, and names no destination for it', async () => {
+  const r = await report('loud.wav', { frames: 48000 * 4 });
+  const text = renderFileReport(r);
+
+  assert.match(text, /LOUDNESS/);
+  assert.match(text, /Integrated:\s+-?\d+\.\d+ LUFS/);
+  assert.match(text, /Loudness range:\s+\d+\.\d+ LU/);
+  assert.match(text, /True peak:\s+[-+]\d+\.\d+ dBTP/);
+  assert.match(text, /Sample peak:\s+[-+]\d+\.\d+ dBFS/);
+  assert.match(text, /BS\.1770/);
+
+  // The printed report is what gets emailed to a client, which is exactly
+  // where an invented pass mark would do the most damage.
+  for (const word of [/\bspotify\b/i, /\btoo loud\b/i, /\btarget\b/i, /\brecommended\b/i]) {
+    assert.doesNotMatch(text, word, `report must not contain ${word}`);
+  }
+});
+
+test('CSV carries loudness as sortable numbers', async () => {
+  const r = await report('loud.wav', { frames: 48000 * 4 });
+  const [header, row] = reportsToCsv([r]).split('\r\n').length > 1
+    ? reportsToCsv([r]).split(/\r?\n/)
+    : reportsToCsv([r]).split('\n');
+
+  const cols = header.split(',');
+  const vals = row.split(',');
+  const get = (name) => vals[cols.indexOf(name)];
+
+  // Plain numbers, not "-14.2 LUFS": a spreadsheet has to be able to sort a
+  // delivery by how loud each file came in.
+  assert.match(get('Integrated loudness (LUFS)'), /^-?\d+(\.\d+)?$/);
+  assert.match(get('Loudness range (LU)'), /^-?\d+(\.\d+)?$/);
+  assert.match(get('True peak (dBTP)'), /^-?\d+(\.\d+)?$/);
+});
+
+test('a summarised log entry keeps its loudness for the history CSV', async () => {
+  const r = await report('loud.wav', { frames: 48000 * 4 });
+  const s = summarizeReport(r);
+  assert.equal(typeof s.integratedLufs, 'number');
+  assert.equal(typeof s.truePeakDbtp, 'number');
+});
+
 test('an unreadable file produces a report that says so and shows no values', async () => {
   const bytes = new Uint8Array(512);
   bytes.set([0x49, 0x44, 0x33, 0x04], 0); // "ID3"

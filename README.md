@@ -2,7 +2,7 @@
 
 A local, offline audio file reporter for macOS. Open an audio file — or a whole
 folder of them — and Kingfisher tells you what is in it: sample rate, bit depth,
-channels, duration, embedded metadata, measured levels, the tempo it was played
+channels, duration, embedded metadata, measured levels and loudness, the tempo it was played
 at, and what the file records about how it was made. It keeps a per-client, per-project history of
 the files you have checked.
 
@@ -84,6 +84,23 @@ Some deliberate absences:
 
 Adding a format is a new module in `src/core/parsers/` plus a
 `registerParser()` call — no changes to the UI, rules or exporters.
+
+**Loudness.** Integrated loudness in LUFS, loudness range in LU and true peak
+in dBTP, to ITU-R BS.1770-4 and EBU Tech 3342 — the measurements every delivery
+spec in music, broadcast and podcasting is actually written in. Peak alone
+cannot tell you how loud a file is; two masters with identical peaks can be
+eight decibels apart to the ear.
+
+True peak is the one level finding that no amount of looking at sample values
+can produce. The waveform a converter reconstructs between the samples can rise
+above all of them, so a file whose every sample sits below full scale can still
+drive playback past it. Kingfisher reconstructs at eight times the file's own
+sample rate — twice what the standard asks for, because with four the limit on
+accuracy stops being the filter and becomes how finely the curve is looked at.
+
+What it does not do is tell you whether any of it is right for wherever the
+file is going. It reports -9.4 LUFS and +0.8 dBTP; what Spotify or the EBU want
+is a target, and targets are the one thing this app has no opinion about.
 
 **Tempo.** Every report carries a tempo: what the file states in its tags, and
 what the audio measures. The two are kept apart and neither corrects the other.
