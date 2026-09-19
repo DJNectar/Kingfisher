@@ -1,42 +1,119 @@
 #!/usr/bin/env python3
 """
-Draw Kingfisher's app icon — the bird — and write it as a .icns.
+Turn packaging/icon-source.png into the app icon, at every size macOS asks for.
 
-Written by hand because the usual route (draw a PNG, run `iconutil`) needs
-macOS, and this has to build anywhere. An .icns is only a container: a magic
-word, a length, then one chunk per size holding a PNG. Both that and PNG itself
-are small enough to write directly, which keeps the icon reproducible from
-source rather than a binary nobody can regenerate.
+The artwork is supplied; this only resizes it and packs the results. Both ends
+are written by hand because the usual route — `sips` and `iconutil` — needs
+macOS, and this has to build on the Linux machine the app is developed on.
+Neither format is difficult: PNG is a zlib stream of filtered scanlines, and an
+.icns is a magic word, a length, then one chunk per size holding a PNG.
 
-The bird is built from overlapping ellipses and polygons, painted back to
-front, each one anti-aliased by supersampling. A kingfisher is a gift to draw
-at icon size: the dagger bill and the blue-over-orange split are recognisable
-even at 32 pixels, where feather detail would turn to mud.
+Resizing is a box filter over PREMULTIPLIED alpha. Averaging straight RGBA
+would pull the colour of fully transparent pixels into the edges of the art,
+which shows up as a dark or muddy fringe around the rounded corners — the one
+place a scaled icon usually goes wrong.
 """
 
-import math
 import struct
+import sys
 import zlib
+from pathlib import Path
 
-# --------------------------------------------------------------- palette
-BG_TOP = (0x1B, 0x22, 0x2C)
-BG_BOTTOM = (0x0E, 0x12, 0x18)
+HERE = Path(__file__).resolve().parent
+SOURCE = HERE / 'icon-source.png'
 
-BLUE_LIGHT = (0x53, 0xC4, 0xEE)   # crown and back, catching the light
-BLUE = (0x2A, 0x9A, 0xD4)
-BLUE_DEEP = (0x17, 0x6A, 0x9E)    # wing and tail, in shadow
-ORANGE = (0xD9, 0x7B, 0x3C)       # breast
-ORANGE_DEEP = (0xB4, 0x5C, 0x28)
-CREAM = (0xF2, 0xE9, 0xDC)        # throat and cheek patch
-BILL = (0x20, 0x26, 0x2E)
-BILL_LIGHT = (0x39, 0x42, 0x4E)
-EYE = (0x11, 0x14, 0x19)
-BRANCH = (0x4A, 0x40, 0x36)
+# The sizes macOS reaches for, as the PNG-backed icns types.
+# Size, and how hard to sharpen afterwards. The smaller the tile, the more of
+# the original detail has been thrown away and the more the remaining edges
+# have to carry, so the correction is strongest at the bottom.
+ICNS_SIZES = [
+    (b'ic11', 32, 1.10),    # 16pt @2x
+    (b'ic12', 64, 0.85),    # 32pt @2x
+    (b'ic07', 128, 0.55),
+    (b'ic13', 256, 0.35),   # 128pt @2x
+    (b'ic14', 512, 0.20),   # 256pt @2x
+    (b'ic10', 1024, 0.0),   # 512pt @2x — near enough the source to leave alone
+]
 
 
-# ------------------------------------------------------------------ png
-def png(width, height, rows):
-    raw = b''.join(b'\x00' + bytes(row) for row in rows)
+# ------------------------------------------------------------------ decode
+def read_png(path):
+    """Decode a non-interlaced 8-bit RGB or RGBA PNG to (width, height, rgba)."""
+    raw = path.read_bytes()
+    if raw[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError(f'{path} is not a PNG')
+
+    idat = bytearray()
+    width = height = channels = None
+    pos = 8
+    while pos < len(raw):
+        length = struct.unpack('>I', raw[pos:pos + 4])[0]
+        kind = raw[pos + 4:pos + 8]
+        data = raw[pos + 8:pos + 8 + length]
+        if kind == b'IHDR':
+            width, height, depth, colour, _, _, interlace = struct.unpack('>IIBBBBB', data)
+            if depth != 8 or colour not in (2, 6) or interlace:
+                raise ValueError('expected a non-interlaced 8-bit RGB or RGBA PNG')
+            channels = 3 if colour == 2 else 4
+        elif kind == b'IDAT':
+            idat += data
+        elif kind == b'IEND':
+            break
+        pos += 12 + length
+
+    stream = zlib.decompress(bytes(idat))
+    stride = width * channels
+    out = bytearray(width * height * 4)
+    previous = bytearray(stride)
+    at = 0
+
+    for y in range(height):
+        filter_type = stream[at]
+        at += 1
+        line = bytearray(stream[at:at + stride])
+        at += stride
+
+        # Undo the per-scanline filter. `a` is the pixel to the left, `b` the
+        # one above, `c` the one above-left.
+        for i in range(stride):
+            a = line[i - channels] if i >= channels else 0
+            b = previous[i]
+            c = previous[i - channels] if i >= channels else 0
+            if filter_type == 0:
+                value = line[i]
+            elif filter_type == 1:
+                value = line[i] + a
+            elif filter_type == 2:
+                value = line[i] + b
+            elif filter_type == 3:
+                value = line[i] + (a + b) // 2
+            elif filter_type == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                value = line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)
+            else:
+                raise ValueError(f'unknown PNG filter {filter_type}')
+            line[i] = value & 0xFF
+
+        row = y * width * 4
+        if channels == 4:
+            out[row:row + width * 4] = line
+        else:
+            for x in range(width):
+                out[row + x * 4:row + x * 4 + 3] = line[x * 3:x * 3 + 3]
+                out[row + x * 4 + 3] = 255
+
+        previous = line
+
+    return width, height, out
+
+
+# ------------------------------------------------------------------ encode
+def write_png(width, height, rgba):
+    rows = b''.join(
+        b'\x00' + bytes(rgba[y * width * 4:(y + 1) * width * 4])
+        for y in range(height)
+    )
 
     def chunk(kind, data):
         body = kind + data
@@ -45,176 +122,134 @@ def png(width, height, rows):
     return (
         b'\x89PNG\r\n\x1a\n'
         + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0))
-        + chunk(b'IDAT', zlib.compress(raw, 9))
+        + chunk(b'IDAT', zlib.compress(bytes(rows), 9))
         + chunk(b'IEND', b'')
     )
 
 
-def blend(under, over, alpha):
-    return tuple(round(u + (o - u) * alpha) for u, o in zip(under, over))
+# ------------------------------------------------------------------ resize
+def resize(src_w, src_h, rgba, size):
+    """Box-filter down to size x size, averaging premultiplied alpha."""
+    out = bytearray(size * size * 4)
+    for oy in range(size):
+        y0 = oy * src_h // size
+        y1 = max(y0 + 1, (oy + 1) * src_h // size)
+        for ox in range(size):
+            x0 = ox * src_w // size
+            x1 = max(x0 + 1, (ox + 1) * src_w // size)
+
+            r = g = b = a = 0
+            count = 0
+            for y in range(y0, y1):
+                base = y * src_w * 4
+                for x in range(x0, x1):
+                    i = base + x * 4
+                    alpha = rgba[i + 3]
+                    # Premultiply: a transparent pixel's colour is meaningless
+                    # and must not be allowed to tint its neighbours.
+                    r += rgba[i] * alpha
+                    g += rgba[i + 1] * alpha
+                    b += rgba[i + 2] * alpha
+                    a += alpha
+                    count += 1
+
+            o = (oy * size + ox) * 4
+            if a == 0:
+                out[o:o + 4] = b'\x00\x00\x00\x00'
+            else:
+                out[o] = min(255, round(r / a))
+                out[o + 1] = min(255, round(g / a))
+                out[o + 2] = min(255, round(b / a))
+                out[o + 3] = round(a / count)
+    return out
 
 
-# --------------------------------------------------------------- shapes
-# All shapes are defined in a 0..1 square and scaled at draw time, so one
-# description serves every icon size.
+def sharpen(size, rgba, amount):
+    """
+    Unsharp mask, over premultiplied alpha.
 
-def ellipse(cx, cy, rx, ry, rotation=0.0):
-    cos_r, sin_r = math.cos(-rotation), math.sin(-rotation)
+    Area-averaging is the right way to shrink an image — it is what stops a
+    1254px drawing aliasing into confetti — but it is inherently soft, and the
+    softness is worst exactly where it hurts: at 32 and 64 pixels, where every
+    edge has to do the work the detail used to do. Every icon pipeline sharpens
+    after the resample for this reason.
 
-    def inside(x, y):
-        dx, dy = x - cx, y - cy
-        u = dx * cos_r - dy * sin_r
-        v = dx * sin_r + dy * cos_r
-        return (u / rx) ** 2 + (v / ry) ** 2 <= 1
-    return inside
+    The amount is scaled by the caller, hardest at the smallest sizes.
+    """
+    if amount <= 0:
+        return rgba
 
+    # Premultiply, so the blur cannot drag transparent black into the edges.
+    pm = [0.0] * (size * size * 4)
+    for i in range(0, len(rgba), 4):
+        a = rgba[i + 3] / 255.0
+        pm[i] = rgba[i] * a
+        pm[i + 1] = rgba[i + 1] * a
+        pm[i + 2] = rgba[i + 2] * a
+        pm[i + 3] = rgba[i + 3]
 
-def polygon(points):
-    def inside(x, y):
-        hit = False
-        n = len(points)
-        for i in range(n):
-            x0, y0 = points[i]
-            x1, y1 = points[(i + 1) % n]
-            if (y0 > y) != (y1 > y):
-                cross = x0 + (y - y0) / (y1 - y0) * (x1 - x0)
-                if x < cross:
-                    hit = not hit
-        return hit
-    return inside
-
-
-def union(*shapes):
-    return lambda x, y: any(s(x, y) for s in shapes)
-
-
-def without(shape, *cuts):
-    return lambda x, y: shape(x, y) and not any(c(x, y) for c in cuts)
-
-
-# The bird, facing left, perched. Ordered back to front.
-HEAD = ellipse(0.470, 0.400, 0.150, 0.142)
-BODY = ellipse(0.575, 0.590, 0.175, 0.200)
-BACK = union(HEAD, BODY)
-
-TAIL = polygon([(0.680, 0.700), (0.870, 0.790), (0.830, 0.845), (0.640, 0.760)])
-WING = ellipse(0.610, 0.585, 0.098, 0.150, rotation=-0.30)
-BREAST = without(ellipse(0.505, 0.625, 0.125, 0.165), WING)
-# Throat and neck patch. On a common kingfisher these are the two pale marks:
-# one under the bill, one behind the cheek. Putting the second up on the crown
-# — where an earlier version had it — reads as a smudge rather than a bird.
-THROAT = ellipse(0.418, 0.472, 0.060, 0.070)
-NECK_PATCH = without(ellipse(0.556, 0.452, 0.050, 0.062, rotation=0.35), WING)
-
-# The dagger. Long, straight and level — the one feature that says kingfisher
-# before anything else does.
-# The tip stops short of the tile edge on purpose: scaled up to fill the icon,
-# a bill starting at the very edge gets sliced off by the rounded corner.
-BILL_SHAPE = polygon([(0.100, 0.434), (0.360, 0.378), (0.360, 0.482)])
-BILL_LOWER = polygon([(0.112, 0.448), (0.360, 0.436), (0.360, 0.488)])
-
-EYE_SHAPE = ellipse(0.405, 0.372, 0.030, 0.030)
-GLINT = ellipse(0.396, 0.363, 0.011, 0.011)
-
-PERCH = polygon([(0.120, 0.858), (0.900, 0.836), (0.900, 0.882), (0.120, 0.904)])
-FOOT = polygon([(0.540, 0.762), (0.585, 0.762), (0.585, 0.858), (0.540, 0.858)])
-
-LAYERS = [
-    (PERCH, BRANCH),
-    (FOOT, BILL),
-    (BACK, BLUE),
-    (ellipse(0.470, 0.352, 0.140, 0.090), BLUE_LIGHT),   # lit crown
-    (BREAST, ORANGE),
-    (ellipse(0.520, 0.700, 0.105, 0.090), ORANGE_DEEP),  # belly in shadow
-    (WING, BLUE_DEEP),
-    (ellipse(0.600, 0.530, 0.070, 0.070, rotation=-0.30), BLUE),  # wing highlight
-    (TAIL, BLUE_DEEP),
-    (THROAT, CREAM),
-    (NECK_PATCH, CREAM),
-    (BILL_SHAPE, BILL),
-    (BILL_LOWER, BILL_LIGHT),
-    (EYE_SHAPE, EYE),
-    (GLINT, CREAM),
-]
-
-
-# How much of the tile the bird fills, and where it sits in it. Applied as a
-# transform on the sampling coordinate rather than by rewriting every shape,
-# so the drawing above stays readable. At 64 pixels an under-filled tile just
-# looks like a small smudge, and the Dock is mostly where this will be seen.
-BIRD_SCALE = 1.12
-BIRD_LIFT = 0.030
-
-
-def draw(size, samples=4):
-    """One icon, at one size."""
-    inset = size * 0.085
-    box = size - inset * 2
-    radius = box * 0.225
-
-    def in_tile(px, py):
-        x, y = px - inset, py - inset
-        if x < 0 or y < 0 or x > box or y > box:
-            return False
-        cx = min(max(x, radius), box - radius)
-        cy = min(max(y, radius), box - radius)
-        return (x - cx) ** 2 + (y - cy) ** 2 <= radius ** 2
-
-    # Supersample: how much of this pixel falls inside a shape.
-    def cover(px, py, inside, to_unit=False):
-        hits = 0
-        for sy in range(samples):
-            for sx in range(samples):
-                x = px + (sx + 0.5) / samples
-                y = py + (sy + 0.5) / samples
-                if to_unit:
-                    x, y = (x - inset) / box, (y - inset) / box
-                    # Shrinking toward the centre in shape-space makes the
-                    # drawing cover more of the tile; the lift moves it up.
-                    x = (x - 0.5) / BIRD_SCALE + 0.5
-                    y = (y - 0.55) / BIRD_SCALE + 0.55 + BIRD_LIFT
-                if inside(x, y):
-                    hits += 1
-        return hits / (samples * samples)
-
-    rows = []
+    # A 3x3 tent blur is enough: at these sizes a wider radius smears the very
+    # edges it is supposed to be defining.
+    KERNEL = (1, 2, 1, 2, 4, 2, 1, 2, 1)
+    total = 16
+    blurred = [0.0] * len(pm)
     for y in range(size):
-        row = bytearray()
-        t = y / max(1, size - 1)
-        backdrop = blend(BG_TOP, BG_BOTTOM, t)
         for x in range(size):
-            tile = cover(x, y, in_tile)
-            if tile <= 0:
-                row += bytes((0, 0, 0, 0))
-                continue
-            colour = backdrop
-            for shape, paint in LAYERS:
-                ink = cover(x, y, shape, to_unit=True)
-                if ink > 0:
-                    colour = blend(colour, paint, ink)
-            row += bytes((*colour, round(255 * tile)))
-        rows.append(row)
-    return png(size, size, rows)
+            for c in range(4):
+                acc = 0.0
+                k = 0
+                for dy in (-1, 0, 1):
+                    yy = min(size - 1, max(0, y + dy))
+                    for dx in (-1, 0, 1):
+                        xx = min(size - 1, max(0, x + dx))
+                        acc += pm[(yy * size + xx) * 4 + c] * KERNEL[k]
+                        k += 1
+                blurred[(y * size + x) * 4 + c] = acc / total
+
+    out = bytearray(len(rgba))
+    for i in range(0, len(pm), 4):
+        alpha = min(255.0, max(0.0, pm[i + 3] + (pm[i + 3] - blurred[i + 3]) * amount))
+        if alpha <= 0:
+            out[i:i + 4] = b'\x00\x00\x00\x00'
+            continue
+        for c in range(3):
+            v = pm[i + c] + (pm[i + c] - blurred[i + c]) * amount
+            # Un-premultiply on the way out.
+            v = v / (alpha / 255.0)
+            out[i + c] = int(min(255.0, max(0.0, v)))
+        out[i + 3] = int(alpha)
+    return out
 
 
 def icns(images):
-    body = b''
-    for kind, data in images:
-        body += kind + struct.pack('>I', len(data) + 8) + data
+    body = b''.join(kind + struct.pack('>I', len(data) + 8) + data for kind, data in images)
     return b'icns' + struct.pack('>I', len(body) + 8) + body
 
 
 if __name__ == '__main__':
-    # Small sizes get more supersampling: there are fewer pixels to carry the
-    # shape, so each one has to be right.
-    wanted = [(b'ic11', 32, 8), (b'ic12', 64, 6), (b'ic07', 128, 4),
-              (b'ic13', 256, 4), (b'ic14', 512, 3)]
-    out = icns([(kind, draw(size, samples)) for kind, size, samples in wanted])
-    with open('packaging/Kingfisher.icns', 'wb') as f:
-        f.write(out)
-    print(f'wrote packaging/Kingfisher.icns ({len(out):,} bytes, {len(wanted)} sizes)')
+    if not SOURCE.exists():
+        sys.exit(f'missing {SOURCE}')
 
-    for size in (512, 128, 64):
-        with open(f'packaging/icon-{size}.png', 'wb') as f:
-            f.write(draw(size, 4 if size > 100 else 8))
-    print('wrote packaging/icon-512.png, icon-128.png, icon-64.png')
+    width, height, rgba = read_png(SOURCE)
+    print(f'source {SOURCE.name}: {width}x{height}')
+
+    chunks = []
+    for kind, size, amount in ICNS_SIZES:
+        scaled = sharpen(size, resize(width, height, rgba, size), amount)
+        chunks.append((kind, write_png(size, size, scaled)))
+        print(f'  {size:>4}px  sharpen {amount:.2f}')
+
+    out = icns(chunks)
+    (HERE / 'Kingfisher.icns').write_bytes(out)
+    print(f'wrote Kingfisher.icns ({len(out):,} bytes, {len(chunks)} sizes)')
+
+    # The same bird for the web app's favicon and header mark, so the two are
+    # plainly the same thing. Small on purpose: it ships inside the app.
+    web = sharpen(128, resize(width, height, rgba, 128), 0.55)
+    target = HERE.parent / 'src' / 'ui' / 'assets' / 'kingfisher-128.png'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(write_png(128, 128, web))
+    print(f'wrote {target.relative_to(HERE.parent)}')
+
+    (HERE / 'icon-512.png').write_bytes(write_png(512, 512, resize(width, height, rgba, 512)))
+    print('wrote icon-512.png')

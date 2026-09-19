@@ -33,11 +33,22 @@ tests it rather than trusting it.
 
 ## The icon
 
-`make-icon.py` draws it and writes a `.icns` directly. The usual route — draw a
-PNG, run `iconutil` — needs macOS. An `.icns` is only a container (a magic
-word, a length, then one PNG per size), and PNG is not much more, so both are
-written by hand. The icon is therefore reproducible from source rather than a
-binary nobody can regenerate.
+The artwork is `packaging/icon-source.png`. `make-icon.py` resizes it to every
+size macOS asks for and packs the results into `Kingfisher.icns`, plus a 128px
+copy at `src/ui/assets/kingfisher-128.png` for the web app's favicon and header
+mark — so the Mac app and the browser app are plainly the same thing.
+
+Both ends are written by hand because the usual route (`sips` and `iconutil`)
+needs macOS. Neither format is difficult: PNG is a zlib stream of filtered
+scanlines, an `.icns` is a magic word, a length, then one chunk per size.
+
+Resizing box-filters over **premultiplied alpha**. Averaging straight RGBA pulls
+the colour of fully transparent pixels into the edges of the art, which shows
+up as a dark fringe around the rounded corners — the one place a scaled icon
+usually goes wrong.
+
+To change the icon, replace `icon-source.png` (a square RGBA PNG, 1024px or
+larger) and re-run the script.
 
 ## What this does NOT fix
 
