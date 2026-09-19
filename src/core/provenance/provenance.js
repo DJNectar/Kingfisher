@@ -76,6 +76,7 @@ export function analyseProvenance(report) {
       matches.push({
         tool: signature.name,
         kind: signature.kind,
+        commonWord: signature.commonWord === true,
         field: field.label,
         value: field.value,
       });
@@ -163,7 +164,6 @@ export function analyseProvenance(report) {
  * exactly one job.
  */
 function toolReason(tool) {
-  const dedicated = DEDICATED_TOOL_FIELDS.has(tool.field);
   const raw = String(tool.value ?? '');
   // Phrases are matched case-insensitively; the marks are matched against the
   // ORIGINAL text, because case carries meaning in them — the "T" separating
@@ -174,27 +174,44 @@ function toolReason(tool) {
 
   const authorship = AUTHORSHIP_PHRASES.find((phrase) => context.includes(`${phrase} ${tool.tool.toLowerCase()}`));
   const marks = MACHINE_WRITTEN_MARKS.filter((m) => m.pattern.test(raw));
+  const dedicated = DEDICATED_TOOL_FIELDS.has(tool.field);
 
-  if (!dedicated && !authorship && !marks.length) {
+  const supporting = [];
+  if (authorship) supporting.push(`It says "${authorship} ${tool.tool}", which is a claim about what made the file rather than a description of it.`);
+  else if (dedicated) supporting.push('That field is where software records what wrote the file.');
+  if (marks.length) {
+    supporting.push(`The same field carries ${joinList(marks.map((m) => m.label))}, so it was written by software rather than typed by hand.`);
+  }
+
+  // A name that is only a name settles it. Nothing else in a file is this
+  // specific: these services do not share their names with anything a
+  // recording would otherwise mention.
+  if (!tool.commonWord) {
     return {
-      weight: 'weak',
+      weight: 'strong',
       text: `Its "${tool.field}" field names ${tool.tool}, ${tool.kind}.`,
-      detail: 'This is free-text, so it may be describing the audio rather than recording what made it.',
+      detail: supporting.length
+        ? supporting.join(' ')
+        : `${tool.tool} is not a word that turns up in audio metadata by accident.`,
     };
   }
 
-  const strong = Boolean(authorship) && marks.length > 0;
-  const detail = [];
-  if (authorship) detail.push(`It says "${authorship} ${tool.tool}", which is a claim about what made the file rather than a description of it.`);
-  else if (dedicated) detail.push('That field is where software records what wrote the file.');
-  if (marks.length) {
-    detail.push(`The same field carries ${joinList(marks.map((m) => m.label))}, so it was written by software rather than typed by hand.`);
+  // The exceptions, which are also ordinary words. Here the old caution is
+  // right: "boomy" in a comment field is far more likely to be an engineer
+  // describing the low end than a generative service naming itself.
+  if (!dedicated && !authorship && !marks.length) {
+    return {
+      weight: 'weak',
+      text: `Its "${tool.field}" field contains the word "${tool.tool}".`,
+      detail: `"${tool.tool}" is the name of a generative tool, but it is also an ordinary word, `
+        + 'so in free text it may well mean nothing at all.',
+    };
   }
 
   return {
-    weight: strong ? 'strong' : 'moderate',
+    weight: authorship && marks.length ? 'strong' : 'moderate',
     text: `Its "${tool.field}" field names ${tool.tool}, ${tool.kind}.`,
-    detail: detail.join(' '),
+    detail: supporting.join(' '),
   };
 }
 
@@ -278,18 +295,25 @@ function assess({ c2pa, matches, phraseHits }) {
     };
   }
 
-  const flag = declared ? 'declared' : 'possible';
+  // A generative service named in the metadata IS the file declaring how it was
+  // made. Reporting that as a hint understates what the file plainly says.
+  const namedGenerator = generativeTools.find((t) => !t.commonWord);
+  const settled = declared || Boolean(namedGenerator);
+
+  const flag = settled ? 'declared' : 'possible';
   const headline = declared
     ? 'This file declares that it was AI-generated'
-    : highest === 'strong'
-      ? 'Strong signs this file is AI-generated'
-      : highest === 'moderate'
-        ? 'Possibly AI-generated'
-        : 'Faint signs of AI generation';
+    : namedGenerator
+      ? `This file says it was made with ${namedGenerator.tool}`
+      : highest === 'strong'
+        ? 'Strong signs this file is AI-generated'
+        : highest === 'moderate'
+          ? 'Possibly AI-generated'
+          : 'Faint signs of AI generation';
 
   return {
     flag,
-    confidence: declared ? 'declared by the file' : highest,
+    confidence: settled ? 'declared by the file' : highest,
     headline,
     reasons,
     limits: [

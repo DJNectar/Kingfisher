@@ -32,21 +32,35 @@ export const TOOL_KINDS = {
 /**
  * Matched case-insensitively against encoder/software/comment fields.
  *
- * `match` is the text to look for. Kept deliberately specific: a bare "suno"
- * would also fire on a filename or a band called Suno, so the patterns favour
- * the forms these tools actually write.
+ * `match` is the text to look for.
+ *
+ * NAMING ONE OF THESE IS TREATED AS SETTLING THE QUESTION. If a file's metadata
+ * says Suno, it was made with Suno — hedging about whether someone might have
+ * been describing the audio buries the clearest evidence a file can carry, and
+ * it did exactly that on a real Suno export whose comment read
+ * "made with suno; created=...; id=...".
+ *
+ * `commonWord: true` marks the handful of names that are also ordinary words —
+ * "boomy" is what an engineer calls too much low end, "loudly" is an adverb,
+ * "bark" is a dog, "jukebox" is a venue. Those four cannot carry that certainty
+ * without inventing confident false positives, so they keep the graded
+ * treatment: they need a dedicated software field, or an authorship phrase, or
+ * a machine-written mark beside them. Every other name in this list speaks for
+ * itself.
  */
 export const TOOL_SIGNATURES = [
   // --- generative music
   { match: 'suno', name: 'Suno', kind: TOOL_KINDS.GENERATIVE_MUSIC },
   { match: 'udio', name: 'Udio', kind: TOOL_KINDS.GENERATIVE_MUSIC },
   { match: 'riffusion', name: 'Riffusion', kind: TOOL_KINDS.GENERATIVE_MUSIC },
-  { match: 'boomy', name: 'Boomy', kind: TOOL_KINDS.GENERATIVE_MUSIC },
+  // "boomy" is what an engineer calls a mix with too much low end, so this one
+  // name cannot carry the certainty the others do. See commonWord below.
+  { match: 'boomy', name: 'Boomy', kind: TOOL_KINDS.GENERATIVE_MUSIC, commonWord: true },
   { match: 'soundraw', name: 'Soundraw', kind: TOOL_KINDS.GENERATIVE_MUSIC },
   { match: 'mubert', name: 'Mubert', kind: TOOL_KINDS.GENERATIVE_MUSIC },
   { match: 'aiva', name: 'AIVA', kind: TOOL_KINDS.GENERATIVE_MUSIC },
   { match: 'beatoven', name: 'Beatoven', kind: TOOL_KINDS.GENERATIVE_MUSIC },
-  { match: 'loudly', name: 'Loudly', kind: TOOL_KINDS.GENERATIVE_MUSIC },
+  { match: 'loudly', name: 'Loudly', kind: TOOL_KINDS.GENERATIVE_MUSIC, commonWord: true },
   { match: 'stable audio', name: 'Stable Audio', kind: TOOL_KINDS.GENERATIVE_MUSIC },
   { match: 'stableaudio', name: 'Stable Audio', kind: TOOL_KINDS.GENERATIVE_MUSIC },
 
@@ -56,8 +70,8 @@ export const TOOL_SIGNATURES = [
   { match: 'audiogen', name: 'AudioGen', kind: TOOL_KINDS.GENERATIVE_MODEL },
   { match: 'audioldm', name: 'AudioLDM', kind: TOOL_KINDS.GENERATIVE_MODEL },
   { match: 'musiclm', name: 'MusicLM', kind: TOOL_KINDS.GENERATIVE_MODEL },
-  { match: 'jukebox', name: 'Jukebox', kind: TOOL_KINDS.GENERATIVE_MODEL },
-  { match: 'bark', name: 'Bark', kind: TOOL_KINDS.GENERATIVE_MODEL },
+  { match: 'jukebox', name: 'Jukebox', kind: TOOL_KINDS.GENERATIVE_MODEL, commonWord: true },
+  { match: 'bark', name: 'Bark', kind: TOOL_KINDS.GENERATIVE_MODEL, commonWord: true },
 
   // --- synthetic speech
   { match: 'elevenlabs', name: 'ElevenLabs', kind: TOOL_KINDS.GENERATIVE_SPEECH },

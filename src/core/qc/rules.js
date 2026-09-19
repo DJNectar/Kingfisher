@@ -484,9 +484,13 @@ export const RULES = [
       const assessment = r.provenance?.assessment;
       if (!assessment || assessment.flag === 'none') return null;
 
-      const reasons = assessment.reasons.map((reason) => `• ${reason.text}`).join('\n');
+      const reasons = assessment.reasons.map((reason) => `\u2022 ${reason.text}`).join('\n');
       return {
         id: 'possible-ai-generated',
+        // A file that names the service that made it is not a footnote. It sat
+        // under "worth noting" on a real Suno export and was read as a miss,
+        // which is a fair reading of something filed that quietly.
+        severity: assessment.flag === 'declared' ? SEVERITY.ATTENTION : SEVERITY.NOTICE,
         title: assessment.headline,
         detail: `What raised this:\n${reasons}\n\n${assessment.limits.join(' ')}`,
       };
