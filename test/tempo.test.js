@@ -24,6 +24,7 @@ import {
   unpulsedNoise,
   drone,
   silence,
+  wanderingTrack,
 } from './helpers/tempo-fixtures.js';
 
 const RATE = 44100;
@@ -329,4 +330,35 @@ test('tempo: a file sampled at intervals reports no tempo, and says why', async 
   assert.equal(report.tempo.measured.established, false);
   assert.match(report.tempo.measured.reason, /continuous/i);
   assert.equal(report.tempo.measured.bpm, null);
+});
+
+// -------------------------------------------- a pulse that moves a lot
+
+test('tempo: a wandering performance reports a range, not a refusal', () => {
+  // An eighteen-minute live improvisation reported no tempo at all, because
+  // its sections disagreed — and the agreement check ran before the range was
+  // ever computed. But a clear beat that moves is not the absence of a tempo;
+  // it is the case the range exists to describe.
+  const audio = wanderingTrack([104, 126, 96, 138, 112], 20);
+  const result = at(audio);
+
+  assert.ok(result.established, 'a moving tempo must not be refused outright');
+  assert.equal(result.wanders, true);
+  assert.equal(result.steady, false);
+  assert.ok(result.range, 'a wandering performance must report where it went');
+  assert.ok(result.range.min < 110, `low end was ${result.range.min.toFixed(1)}`);
+  assert.ok(result.range.max > 120, `high end was ${result.range.max.toFixed(1)}`);
+  assert.equal(result.confidence, 'low', 'no single figure describes it, and it should say so');
+  assert.ok(result.limits.some((l) => /no single figure describes it/i.test(l)));
+});
+
+test('tempo: no pulse is still refused, and says what it measured', () => {
+  // The distinction that matters: a moving tempo is reported, an absent one is
+  // not. Both must state the number they were judged on.
+  for (const audio of [drone(45), unpulsedNoise(45)]) {
+    const result = at(audio);
+    assert.equal(result.established, false);
+    assert.match(result.reason, /regularity of \d\.\d\d/);
+    assert.ok(result.evidence, 'a refusal should carry what it did find');
+  }
 });

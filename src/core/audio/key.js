@@ -400,6 +400,25 @@ export function keyFromChromagram(cg) {
     ? settled.filter((s) => s.name === winner.name).length / settled.length
     : null;
 
+  /**
+   * Do the sections even agree on WHICH NOTES are being used?
+   *
+   * This is a harder question than whether they agree on a tonal centre, and a
+   * more damning one to fail. Sections landing on different centres within one
+   * collection is ordinary — that is the relative-major problem, and the report
+   * handles it by naming the alternatives. Sections landing on different
+   * COLLECTIONS means the analysis is not finding the same music twice.
+   *
+   * Seen on a real file: an overall reading of E♭ major, three flats, whose
+   * first section read G Mixolydian (no flats) and whose last read G Dorian
+   * (one flat). Presenting "Likely key: E♭ major" over that is a confident
+   * answer built on sections that contradict it and each other.
+   */
+  const collectionAgreement = settled.length
+    ? settled.filter((s) => s.root === collection.root).length / settled.length
+    : null;
+  const coherent = collectionAgreement === null || collectionAgreement >= 0.5;
+
   return {
     established: true,
 
@@ -423,8 +442,18 @@ export function keyFromChromagram(cg) {
     alternatives: alternatives.map((c) => ({ name: c.name, mode: c.mode, closeness: c.closeness })),
     ambiguous: alternatives.length > 0,
 
-    confidence: gradeConfidence(collection.concentration, agreement, alternatives.length),
+    confidence: coherent
+      ? gradeConfidence(collection.concentration, agreement, alternatives.length)
+      : 'low',
     agreement,
+
+    /**
+     * False when the sections disagree about which notes are being used. The
+     * single key above is then an average of readings that do not describe the
+     * same music, and the report says so rather than leading with it.
+     */
+    coherent,
+    collectionAgreement,
 
     steady: !(settled.length >= 3 && agreement !== null && agreement < 0.6),
     sections: sections.map((s) => ({ startSeconds: s.startSeconds, name: s.name })),
@@ -433,7 +462,7 @@ export function keyFromChromagram(cg) {
     sectionSeconds: SECTION_SECONDS,
 
     method: 'chroma from spectral peaks, folded to twelve pitch classes; the tonal centre weighted by bass content and by the ending',
-    limits: limitsFor(winner, alternatives, settled, agreement),
+    limits: limitsFor(winner, alternatives, settled, agreement, coherent),
   };
 }
 
@@ -513,7 +542,7 @@ function analyseSections({ frames, bass, fps }) {
     if (!collection || collection.concentration < ESTABLISH_CONCENTRATION) {
       // A section that cannot make up its mind contributes nothing, rather
       // than voting for whatever it happened to score highest on.
-      sections.push({ startSeconds: start / fps, name: null });
+      sections.push({ startSeconds: start / fps, name: null, root: null });
       continue;
     }
     const ranked = rankCentres(collection, {
@@ -521,7 +550,7 @@ function analyseSections({ frames, bass, fps }) {
       bassChroma: pool(bass, start, start + size),
       ending: null,
     });
-    sections.push({ startSeconds: start / fps, name: ranked[0].name });
+    sections.push({ startSeconds: start / fps, name: ranked[0].name, root: collection.root });
   }
   return sections;
 }
@@ -551,7 +580,7 @@ function gradeConfidence(concentration, agreement, alternativeCount) {
   return 'low';
 }
 
-function limitsFor(winner, alternatives, settled, agreement) {
+function limitsFor(winner, alternatives, settled, agreement, coherent = true) {
   const limits = [
     'This key was worked out from the audio. It is not a value stored in the file.',
     'Which notes are being used is the part this can establish well. Which of them is home is a judgement about emphasis, and much harder to read from a recording.',
@@ -559,7 +588,9 @@ function limitsFor(winner, alternatives, settled, agreement) {
   if (alternatives.length) {
     limits.push(`${[winner.name, ...alternatives.map((a) => a.name)].join(', ')} all use these same seven notes, and the evidence does not clearly separate them.`);
   }
-  if (settled.length >= 3 && agreement !== null && agreement < 0.6) {
+  if (!coherent) {
+    limits.push('Sections of this piece did not even agree on which notes are being used, so the single key above is an average of readings that do not describe the same music. Treat it as "no clear key" rather than as a weak answer.');
+  } else if (settled.length >= 3 && agreement !== null && agreement < 0.6) {
     limits.push('Different sections settled on different centres, so no single key describes the whole piece.');
   }
   return limits;

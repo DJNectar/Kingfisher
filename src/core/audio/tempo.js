@@ -452,13 +452,27 @@ export function tempoFromOnsetSignal({ oss, fps }) {
     ? placed.filter((w) => Math.abs(w.bpm - centre) / centre <= AGREEMENT_TOLERANCE).length / placed.length
     : 0;
 
-  if (correlation < ESTABLISH_CORRELATION || agreement < ESTABLISH_AGREEMENT) {
+  // Two different failures, which deserve two different answers.
+  //
+  // NO PULSE (correlation too low) really is "there is no tempo here", and
+  // refusing is right: ambient, rubato, unmetred material.
+  //
+  // A PULSE THAT MOVES A LOT (correlation fine, sections disagreeing) is not
+  // the absence of a tempo, it is a tempo doing something. Refusing there was
+  // rejecting precisely the case the range was built to describe — found on an
+  // eighteen-minute live improvisation, which reported no tempo at all when
+  // what it actually had was a clear beat wandering across the performance.
+  // "Moves between 108 and 132" is worth far more to a reader than silence.
+  if (correlation < ESTABLISH_CORRELATION) {
+    const measured = `The audio repeats at ${centre.toFixed(1)} BPM with a regularity of `
+      + `${correlation.toFixed(2)}, where ${ESTABLISH_CORRELATION} is the least this will call a pulse.`;
     return notEstablished(
-      correlation < ESTABLISH_CORRELATION
-        ? 'The audio does not repeat regularly enough for a tempo to mean anything \u2014 which is the honest answer for ambient, rubato or unmetred material.'
-        : 'Different parts of this audio gave unrelated tempos, so there is no single answer to report.',
+      `The audio does not repeat regularly enough for a tempo to mean anything \u2014 which is the honest answer for ambient, rubato or unmetred material. ${measured}`,
+      { bpm: centre, correlation, agreement },
     );
   }
+
+  const wanders = agreement < ESTABLISH_AGREEMENT;
 
   const reliable = windows.filter((w) => w.reliable);
 
@@ -468,8 +482,12 @@ export function tempoFromOnsetSignal({ oss, fps }) {
   // "the tempo moves" would be inventing a performance detail.
   let range = null;
   let steady = true;
-  if (reliable.length >= 3) {
-    const values = reliable.map((w) => w.bpm);
+  // When the tempo wanders, the windows that agree with the middle are not the
+  // interesting ones — the spread is the finding, so every section that found a
+  // pulse counts toward it.
+  const spread = wanders ? placed.filter((w) => w.foundPulse) : reliable;
+  if (spread.length >= 3) {
+    const values = spread.map((w) => w.bpm);
     const min = Math.min(...values);
     const max = Math.max(...values);
     const floor = Math.max(2 * overall.resolutionBpm, 1.5);
@@ -478,17 +496,22 @@ export function tempoFromOnsetSignal({ oss, fps }) {
       range = { min, max, spread: max - min };
     }
   }
+  if (wanders) steady = false;
 
   // Report the middle of the windows rather than the whole-song figure. For a
   // performance that moves, the whole-song number is pulled toward whichever
   // section happened to be most regular; the median is where the piece sat. On
   // steady material the two agree to within the resolution anyway.
-  const bpm = reliable.length >= 3 ? centre : overall.bpm;
+  // The median of the sections, which for a wandering performance is the only
+  // honest single figure: the middle of where it actually went.
+  const bpm = spread.length >= 3 ? centre : overall.bpm;
 
   return {
     established: true,
     bpm,
-    confidence: gradeConfidence(correlation, agreement),
+    confidence: wanders ? 'low' : gradeConfidence(correlation, agreement),
+    /** True when the sections disagreed enough that no single figure describes it. */
+    wanders,
     /** How regularly the audio repeats at this tempo: 1 is exact, 0 not at all. */
     correlation,
     agreement,
@@ -503,7 +526,7 @@ export function tempoFromOnsetSignal({ oss, fps }) {
     windows: windows.map((w) => ({ startSeconds: w.startSeconds, bpm: w.bpm, reliable: w.reliable })),
     windowSeconds: WINDOW_SECONDS,
     method: 'spectral-flux onsets, autocorrelation, 120 BPM perceptual prior',
-    limits: limitsFor(steady),
+    limits: limitsFor(steady, wanders, placed.length),
   };
 }
 
@@ -587,10 +610,25 @@ function analyseWindows({ oss, fps }, globalBpm) {
   const hopFrames = Math.round(WINDOW_HOP_SECONDS * fps);
   if (oss.length < windowFrames) return [];
 
-  const windows = [];
+  // Measure every window first, then fold toward the middle of what they found
+  // rather than toward the whole-song figure.
+  //
+  // Folding toward the whole-song estimate assumes that estimate is sound, and
+  // for a performance whose tempo wanders it is not — the autocorrelation has
+  // no single period to lock onto. On a test piece moving through 104, 126, 96,
+  // 138 and 112 BPM, the whole-song figure came out near 190, and folding
+  // dragged a correctly-measured 96 up to 192, producing a range of 104-192
+  // for music that never left 96-138.
+  const raw = [];
   for (let start = 0; start + windowFrames <= oss.length; start += hopFrames) {
-    const slice = oss.subarray(start, start + windowFrames);
-    const local = tempoFromOnsets(slice, fps);
+    raw.push({ start, local: tempoFromOnsets(oss.subarray(start, start + windowFrames), fps) });
+  }
+
+  const found = raw.map((r) => r.local?.bpm).filter((b) => b !== undefined && b !== null);
+  const reference = median(found) ?? globalBpm;
+
+  const windows = [];
+  for (const { start, local } of raw) {
     if (!local) {
       windows.push({ startSeconds: start / fps, bpm: null, correlation: null, reliable: false });
       continue;
@@ -598,13 +636,17 @@ function analyseWindows({ oss, fps }, globalBpm) {
     // A window that heard the half or the double of the song's tempo has not
     // found a different tempo, it has found the same one and named it
     // differently. Folding first is what stops that becoming a fake range.
-    const folded = foldToOctaveOf(local.bpm, globalBpm);
+    const folded = foldToOctaveOf(local.bpm, reference);
     windows.push({
       startSeconds: start / fps,
       bpm: folded,
       correlation: local.correlation,
+      // Did this window find a pulse at all? Separate from whether it agrees
+      // with the rest of the piece — a section at a different tempo has still
+      // measured something, and for a wandering performance that IS the point.
+      foundPulse: local.correlation >= ESTABLISH_CORRELATION,
       reliable: local.correlation >= ESTABLISH_CORRELATION
-        && Math.abs(folded - globalBpm) / globalBpm < 0.25,
+        && Math.abs(folded - reference) / reference < 0.25,
     });
   }
   return windows;
@@ -644,21 +686,29 @@ function median(values) {
   return sorted[sorted.length >> 1];
 }
 
-function limitsFor(steady) {
+function limitsFor(steady, wanders = false, sections = 0) {
   const limits = [
     'This tempo was worked out from the audio. It is not a value stored in the file.',
     'Which beat a listener counts \u2014 and so whether they call it this tempo, half of it, or double \u2014 is a judgement rather than a measurement.',
   ];
-  if (steady) {
-    limits.push('No movement was found beyond this method’s own precision, which is not the same as proving the tempo never moves.');
+  if (wanders) {
+    limits.push(`The tempo moved enough across this piece that no single figure describes it \u2014 ${sections} sections were measured and they did not settle on one. The figure given is the middle of where it went; the range is the more useful number.`);
+  } else if (steady) {
+    limits.push('No movement was found beyond this method\u2019s own precision, which is not the same as proving the tempo never moves.');
   }
   return limits;
 }
 
-function notEstablished(reason) {
+/**
+ * `evidence` carries what the analysis DID find, even though it is not being
+ * reported as a tempo. It is what makes a refusal checkable rather than a
+ * shrug, and it is what a wrongly-set threshold looks like from the outside.
+ */
+function notEstablished(reason, evidence = null) {
   return {
     established: false,
     bpm: null,
+    evidence,
     reason,
     confidence: null,
     steady: null,

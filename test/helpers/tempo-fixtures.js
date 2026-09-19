@@ -110,3 +110,23 @@ export function drone(seconds, sampleRate = 44100) {
 export function silence(seconds, sampleRate = 44100) {
   return new Float32Array(Math.round(seconds * sampleRate));
 }
+
+/**
+ * A performance that keeps changing tempo, as a long improvisation does.
+ *
+ * Not the same as the two-tempo case: this never settles anywhere for long, so
+ * no single figure describes it. An earlier version refused to report a tempo
+ * for material like this at all, which threw away the useful part — there IS a
+ * clear beat, it just moves.
+ */
+export function wanderingTrack(tempos, secondsEach, sampleRate = 44100) {
+  const parts = tempos.map((bpm) => clickTrack(bpm, secondsEach, sampleRate));
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const buffer = new Float32Array(total);
+  let at = 0;
+  for (const part of parts) {
+    buffer.set(part, at);
+    at += part.length;
+  }
+  return buffer;
+}
