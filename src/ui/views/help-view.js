@@ -34,6 +34,7 @@ export function renderHelp(host) {
         ['checking', 'Checking a file or folder'],
         ['reading', 'Reading the results'],
         ['tempo', 'Tempo'],
+        ['key', 'Key'],
         ['clients', 'Clients and projects'],
         ['todo', 'The to-do list'],
         ['saving', 'Saving your work'],

@@ -335,7 +335,9 @@ step('Provenance: declared, possible, and nothing found');
   expect('and it is not claimed as verified', /did not verify the signature/i, declared);
 
   const tagged = await page.locator('.report').nth(1).locator('.ai-flag').innerText();
-  expect('a tool-tagged file reads as possible, not declared', /Possibly AI-generated/i, tagged);
+  // Naming the service settles it, wherever the name appears: "if there is
+  // mention of Suno, it is AI."
+  expect('a tool-tagged file names the service that made it', /made with Suno/i, tagged);
   expect('the tool is named', /Suno/, tagged);
   expect('the phrase in the comment is a separate reason', /"AI-generated"/i, tagged);
 

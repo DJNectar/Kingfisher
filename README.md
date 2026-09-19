@@ -93,6 +93,16 @@ performance moves — a live take reports "150.6 BPM, moves between 146 and 158"
 rather than pretending a band is a click track. Where nothing repeats regularly
 enough to mean anything, it says so instead of producing a number.
 
+**Key.** Reported in two halves, because they are not equally answerable: the
+**note collection** (the key signature), which chroma establishes well, and the
+**tonal centre**, which it does not. C major and A minor contain exactly the
+same seven notes; so do G Mixolydian and D Dorian. So the notes lead, the
+likely key follows as a best guess, and every key sharing those notes is named
+beside it. Measured on a real recording by transposing it through all twelve
+semitones, the note collection follows 8 times in 10 and the centre 1 time in
+10 — which is why they are presented differently. Material with no key at all
+is refused, with the evidence shown.
+
 ## Exports
 
 Copy to clipboard, `.txt`, `.csv` and `.pdf` — for a single file, a whole

@@ -44,13 +44,15 @@ function fullScaleThreshold(bitDepth, isFloat) {
  * @param {import('../bytes.js').ByteSource} source
  * @param {object} report a parsed report (read-only here)
  * @param {{maxScanBytes?:number, onsetCollector?:object}} options
- *   `onsetCollector` is fed the mono downmix as the scan walks it, so tempo
- *   costs one extra pass over samples already in hand rather than a decode.
+ *   `onsetCollector` and `chromaCollector` are fed the mono downmix as the
+ *   scan walks it, so tempo and key cost one extra pass over samples already
+ *   in hand rather than a decode.
  * @returns {Promise<object|null>} stats, or null when there is nothing to measure
  */
 export async function scanAudio(source, report, {
   maxScanBytes = DEFAULT_MAX_SCAN_BYTES,
   onsetCollector = null,
+  chromaCollector = null,
 } = {}) {
   const f = report.format;
   const a = report.audioData;
@@ -100,9 +102,14 @@ export async function scanAudio(source, report, {
   // between probes are not silence, they are jump cuts, and the gaps between
   // them are not time. Onsets either see a continuous performance or they see
   // nothing worth reporting.
-  const onsets = ranges.length === 1 ? onsetCollector : null;
+  const continuous = ranges.length === 1;
+  const onsets = continuous ? onsetCollector : null;
+  const chroma = continuous ? chromaCollector : null;
   if (onsetCollector && !onsets) {
     onsetCollector.abandon('This file is too large to read end to end, so it was sampled at intervals. Tempo needs continuous audio.');
+  }
+  if (chromaCollector && !chroma) {
+    chromaCollector.abandon('This file is too large to read end to end, so it was sampled at intervals. Key needs continuous audio.');
   }
 
   const ch = Array.from({ length: f.channels }, () => newChannelAccumulator());
@@ -131,7 +138,11 @@ export async function scanAudio(source, report, {
           accumulate(ch[c], value, frameIndex, threshold);
           sum += value;
         }
-        if (onsets) onsets.push(sum / f.channels);
+        if (onsets || chroma) {
+          const mono = sum / f.channels;
+          if (onsets) onsets.push(mono);
+          if (chroma) chroma.push(mono);
+        }
         framesScanned++;
       }
 

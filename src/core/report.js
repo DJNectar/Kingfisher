@@ -162,6 +162,19 @@ export function createReport(file = {}) {
       measured: null,
     },
 
+    /**
+     * Key, in the same two halves the analysis actually answers:
+     *
+     *   signature  which notes are being used — established well
+     *   centre     which of them is home — much weaker, and said so
+     *
+     * Measured on a real recording, the note collection follows a
+     * transposition 8 times out of 10 and the tonal centre 1 time out of 10.
+     * The report is shaped around that: the notes lead, the centre is a best
+     * guess, and every key sharing those notes is named beside it.
+     */
+    key: null,
+
     /** Factual notes produced by the observation rules. Never comparisons. */
     observations: [],
 
@@ -239,6 +252,10 @@ export function summarizeReport(report) {
     measuredBpm: report.tempo?.measured?.established ? report.tempo.measured.bpm : null,
     tempoConfidence: report.tempo?.measured?.established ? report.tempo.measured.confidence : null,
     tempoSteady: report.tempo?.measured?.established ? report.tempo.measured.steady : null,
+
+    keySignature: report.key?.established ? report.key.signature.name : null,
+    keyName: report.key?.established ? report.key.name : null,
+    keyConfidence: report.key?.established ? report.key.confidence : null,
 
     originFlag: report.provenance?.assessment?.flag ?? null,
     originConfidence: report.provenance?.assessment?.confidence ?? null,

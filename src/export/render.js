@@ -106,6 +106,7 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
 
     lines.push(...renderLevels(report));
     lines.push(...renderTempo(report));
+    lines.push(...renderKey(report));
   }
 
   lines.push(...renderObservations(report.observations));
@@ -263,6 +264,40 @@ function renderTempo(report) {
     for (const limit of measured.limits) lines.push(`  \u2022 ${limit}`);
   }
 
+  return lines;
+}
+
+/** Key, in the export as on screen: the notes first, the centre as a guess. */
+function renderKey(report) {
+  const key = report.key;
+  if (!key) return [];
+
+  const lines = [section('KEY')];
+
+  if (!key.established) {
+    lines.push(row('Key', 'not established'));
+    lines.push(row('Why not', key.reason));
+    return lines;
+  }
+
+  lines.push(row('Notes used', `${key.signature.notes.join(' ')}  (${key.signature.name})`));
+  lines.push(row('Likely key', key.name));
+  if (key.ambiguous) {
+    lines.push(row('Or equally', `${key.alternatives.map((a) => a.name).join(', ')} \u2014 the same seven notes`));
+  }
+  lines.push(row('Confidence', key.confidence));
+  if (key.sections.length >= 2) {
+    lines.push(row('Through the piece', key.steady ? 'settles in one place throughout' : 'moves between sections'));
+    lines.push(row('Starts in', key.startsIn));
+    lines.push(row('Ends in', key.endsIn));
+  }
+  lines.push(row('Pitched energy on those notes', `${(key.concentration * 100).toFixed(0)}%, against 58% by chance`));
+  lines.push(row('How', key.method));
+
+  if (key.limits?.length) {
+    lines.push('');
+    for (const limit of key.limits) lines.push(`  \u2022 ${limit}`);
+  }
   return lines;
 }
 

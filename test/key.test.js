@@ -15,6 +15,10 @@ import assert from 'node:assert/strict';
 import { estimateKey, noteCollection, chromagram, CHANCE_CONCENTRATION } from '../src/core/audio/key.js';
 import { downmix } from '../src/core/audio/tempo.js';
 import * as K from './helpers/key-fixtures.js';
+import { inspectSource } from '../src/core/registry.js';
+import { BufferByteSource } from '../src/core/bytes.js';
+import { riff, fmtChunk, chunk, pcmData } from './helpers/wav-fixtures.js';
+import { renderFileReport } from '../src/export/render.js';
 
 const RATE = 44100;
 const at = (audio) => estimateKey([audio], { sampleRate: RATE });
@@ -245,4 +249,90 @@ test('key: reverb costs the centre but never the note collection', () => {
     [result.name, ...result.alternatives.map((a) => a.name)].includes('C major'),
     `C major was not among the candidates: ${result.name}`,
   );
+});
+
+// -------------------------------------------------- through the whole app
+
+test('key: an uncompressed file gets a key without ever being decoded', async () => {
+  const music = K.cMajor();
+  const bytes = riff([
+    fmtChunk({ sampleRate: RATE, channels: 2, bitsPerSample: 24 }),
+    chunk('data', pcmData({
+      frames: music.length,
+      channels: 2,
+      bitsPerSample: 24,
+      gen: (f) => music[f] * 0.5,
+    })),
+  ]);
+
+  const report = await inspectSource(new BufferByteSource(Buffer.from(bytes)), {
+    name: 'progression.wav', path: 'progression.wav', size: bytes.length,
+  });
+
+  assert.equal(report.parse.status, 'ok');
+  assert.ok(report.key.established);
+  assert.equal(report.key.signature.scale, 'C major');
+  // The levels still come from the file's own bytes: adding key must not have
+  // quietly turned the scan into a decode.
+  assert.equal(report.audio.source, 'file bytes');
+});
+
+test('key: a drum-only file reports no key through the whole pipeline', async () => {
+  const drums = K.drumLoop(40, RATE);
+  const bytes = riff([
+    fmtChunk({ sampleRate: RATE, channels: 2, bitsPerSample: 24 }),
+    chunk('data', pcmData({
+      frames: drums.length,
+      channels: 2,
+      bitsPerSample: 24,
+      gen: (f) => drums[f] * 0.5,
+    })),
+  ]);
+
+  const report = await inspectSource(new BufferByteSource(Buffer.from(bytes)), {
+    name: 'drums.wav', path: 'drums.wav', size: bytes.length,
+  });
+
+  assert.equal(report.key.established, false);
+  assert.equal(report.key.name, null);
+  assert.match(report.key.reason, /pitched energy/i);
+});
+
+test('key: a file sampled at intervals reports no key, and says why', async () => {
+  const music = K.cMajor();
+  const bytes = riff([
+    fmtChunk({ sampleRate: RATE, channels: 2, bitsPerSample: 24 }),
+    chunk('data', pcmData({
+      frames: music.length, channels: 2, bitsPerSample: 24, gen: (f) => music[f] * 0.5,
+    })),
+  ]);
+
+  const report = await inspectSource(new BufferByteSource(Buffer.from(bytes)), {
+    name: 'huge.wav', path: 'huge.wav', size: bytes.length,
+  }, { maxScanBytes: 1024 * 1024 });
+
+  assert.equal(report.key.established, false);
+  assert.match(report.key.reason, /continuous/i);
+});
+
+test('key: the export leads with the notes, not the centre', async () => {
+  const music = K.cMajor();
+  const bytes = riff([
+    fmtChunk({ sampleRate: RATE, channels: 2, bitsPerSample: 24 }),
+    chunk('data', pcmData({
+      frames: music.length, channels: 2, bitsPerSample: 24, gen: (f) => music[f] * 0.5,
+    })),
+  ]);
+  const report = await inspectSource(new BufferByteSource(Buffer.from(bytes)), {
+    name: 'p.wav', path: 'p.wav', size: bytes.length,
+  });
+  const text = renderFileReport(report);
+
+  assert.match(text, /KEY/);
+  assert.match(text, /Notes used:\s+C D E F G A B/);
+  assert.match(text, /Likely key:/);
+  assert.match(text, /Or equally:.*same seven notes/);
+  assert.match(text, /not a value stored in the file/i);
+  // The notes must come before the centre, because that is the reliable half.
+  assert.ok(text.indexOf('Notes used') < text.indexOf('Likely key'));
 });

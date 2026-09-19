@@ -354,10 +354,26 @@ export function estimateKey(channelData, { sampleRate } = {}) {
 
   const cg = chromagram(mono, sampleRate);
   if (!cg) return notEstablished('There was not enough audio to analyse.');
+  return keyFromChromagram(cg);
+}
+
+/**
+ * Read a key off a finished chromagram.
+ *
+ * Shared by both routes in, exactly as the tempo analysis shares its back half:
+ * samples decoded by the browser, and samples read straight out of an
+ * uncompressed file as it is scanned. Same audio, same answer, whichever way
+ * it arrived.
+ */
+export function keyFromChromagram(cg) {
+  if (!cg || !cg.frames?.length) return notEstablished('There was not enough audio to analyse.');
+  if (cg.frames.length / cg.fps < MINIMUM_SECONDS) {
+    return notEstablished(`This is ${(cg.frames.length / cg.fps).toFixed(1)} seconds long. Establishing a key needs at least about ${MINIMUM_SECONDS} seconds of music.`);
+  }
 
   const full = pool(cg.frames);
   if (!full) {
-    return notEstablished('There was no pitched content to analyse — silence, or sound with no notes in it.');
+    return notEstablished('There was no pitched content to analyse \u2014 silence, or sound with no notes in it.');
   }
 
   const collection = noteCollection(full);
@@ -380,9 +396,6 @@ export function estimateKey(channelData, { sampleRate } = {}) {
   const alternatives = candidates.slice(1).filter((c) => c.closeness >= 1 - AMBIGUOUS_WITHIN);
   const sections = analyseSections(cg);
   const settled = sections.filter((s) => s.name);
-  // Null, not zero, when the piece is too short to have sections at all. A
-  // three-minute single that was never divided has not disagreed with itself,
-  // and scoring it as though it had would mark every short piece down.
   const agreement = settled.length
     ? settled.filter((s) => s.name === winner.name).length / settled.length
     : null;
@@ -421,6 +434,71 @@ export function estimateKey(channelData, { sampleRate } = {}) {
 
     method: 'chroma from spectral peaks, folded to twelve pitch classes; the tonal centre weighted by bass content and by the ending',
     limits: limitsFor(winner, alternatives, settled, agreement),
+  };
+}
+
+/**
+ * Build a chromagram a sample at a time, for audio that arrives as a stream.
+ *
+ * An uncompressed file is already being walked sample by sample to measure its
+ * levels, so this costs one more pass over numbers in hand rather than a
+ * decode. Only the twelve-value frames are kept — about ten per second — so a
+ * whole album's chromagram is smaller than a second of its audio.
+ */
+export function createChromaStream(sampleRate) {
+  const fft = createFft(FRAME_SIZE);
+  const window = hannWindow(FRAME_SIZE);
+  const ring = new Float64Array(FRAME_SIZE);
+  const frame = new Float64Array(FRAME_SIZE);
+  const mags = new Float64Array(fft.bins);
+  const binHz = sampleRate / FRAME_SIZE;
+
+  const inRange = new Uint8Array(fft.bins);
+  const isBass = new Uint8Array(fft.bins);
+  for (let k = 1; k < fft.bins; k++) {
+    const hz = k * binHz;
+    if (hz >= LOWEST_HZ && hz <= HIGHEST_HZ) inRange[k] = 1;
+    if (hz >= BASS_LOW_HZ && hz <= BASS_HIGH_HZ) isBass[k] = 1;
+  }
+
+  const frames = [];
+  const bass = [];
+  let filled = 0;
+  let sinceLastFrame = 0;
+  let abandoned = null;
+
+  return {
+    fps: sampleRate / HOP,
+    abandon(reason) {
+      abandoned = reason;
+    },
+    push(value) {
+      if (abandoned) return;
+      ring[filled % FRAME_SIZE] = value;
+      filled++;
+      sinceLastFrame++;
+      if (filled < FRAME_SIZE || sinceLastFrame < HOP) return;
+      sinceLastFrame = 0;
+
+      const start = filled % FRAME_SIZE;
+      for (let i = 0; i < FRAME_SIZE; i++) frame[i] = ring[(start + i) % FRAME_SIZE] * window[i];
+      fft.magnitudes(frame, mags);
+
+      const chroma = new Float64Array(12);
+      for (let k = 2; k < fft.bins - 1; k++) {
+        if (!inRange[k]) continue;
+        if (!(mags[k] > mags[k - 1] && mags[k] >= mags[k + 1])) continue;
+        const pc = pitchClassAt(mags, k, binHz);
+        if (pc >= 0) chroma[pc] += mags[k];
+      }
+      frames.push(chroma);
+      bass.push(lowestNote(mags, inRange, isBass, fft.bins, binHz));
+    },
+    finish() {
+      if (abandoned) return { abandoned };
+      if (frames.length < 2) return null;
+      return { frames, bass, fps: sampleRate / HOP };
+    },
   };
 }
 

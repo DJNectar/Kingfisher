@@ -664,3 +664,69 @@ and leaves it there. A BPM tag of 0 is treated as "not set" rather than reported
 as a tempo of zero, for the same reason blanks are never written as numbers.
 
 **52 browser assertions, all passing. 207 unit tests, all passing.**
+
+---
+
+## Session 8 — key goes live, and Suno settles the AI question
+
+### "If there is mention of Suno, it is AI. Period."
+The user's own Suno export, which they reported as a miss. It was not a miss —
+the flag was raised — but it read as one, and fairly:
+
+    [Worth noting] Faint signs of AI generation
+    Confidence: weak
+
+The file's comment field said:
+
+    made with suno; created=2026-04-20T22:19:02Z; id=808f7fb4-5aaa-...
+
+31. **The weight came from which FIELD held the name, not from what the field
+    said.** `ICMT` is not a dedicated software field, so anything in it was
+    "free-text, so it may be describing the audio rather than recording what
+    made it". Reasonable for a comment reading "sounds like Suno". Absurd for
+    one carrying a generation id — nobody describing a track writes a UUID.
+
+Naming a generative service is now the file declaring how it was made: flag
+`declared`, headline "This file says it was made with Suno", and the
+observation raised from *worth noting* to *needs a look*.
+
+**Four of the thirty-four names are also ordinary words** — `boomy` is what an
+engineer calls too much low end, `loudly` is an adverb, `bark` is a dog,
+`jukebox` is a venue. Those keep the graded treatment. Applying the rule to
+them would manufacture confident false positives on exactly the free-text
+comments an engineer writes.
+
+A generative *phrase* with no service named stays "possible": "AI-generated" in
+a comment is a strong hint, not the file naming what made it.
+
+32. **A bug inside the fix.** Phrase matching lowercases the text, which turns
+    the `T` between date and time in an ISO timestamp into `t`, so the
+    timestamp was never recognised. Marks are now matched against the original
+    text, where case carries meaning.
+
+### Key, shipped on the evidence rather than on hope
+Wired in after the verification work settled what it can and cannot do.
+Measured by transposing a real recording through all twelve semitones:
+
+    note collection follows the transposition   8/10
+    tonal centre follows the transposition      1/10
+
+So the report is built around that split. The **notes lead** — "B♭ C D E♭ F G A
+(2 flats)" — the likely key follows as a best guess, and every key sharing
+those notes is named beside it. The tile shows the centre with "or F
+Mixolydian — same notes" underneath rather than a bare name.
+
+Uncompressed files never get decoded for it: the chromagram is built a sample
+at a time during the level scan, and only the twelve-value frames are kept —
+about ten a second, so a whole album's chromagram is smaller than a second of
+its audio. Compressed files get it from the decode that already happens.
+
+A file read in probes rather than end to end reports no key and says why, for
+the same reason it reports no tempo: the joins between probes are jump cuts,
+and the gaps between them are not time.
+
+**Still true and worth repeating:** the thresholds rest on one real recording.
+The transposition and degradation tests prove the machinery tracks pitch and
+survives drums, noise and clipping. Neither proves a hit rate.
+
+**237 unit tests, 52 browser assertions, all passing.**

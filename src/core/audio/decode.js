@@ -28,6 +28,7 @@
 
 import { measureFloatChannels } from './measure.js';
 import { estimateTempo } from './tempo.js';
+import { estimateKey } from './key.js';
 
 /** Bytes of decoded audio we are willing to hold. 400 MB ≈ 40 stereo minutes. */
 export const MAX_DECODED_BYTES = 400 * 1024 * 1024;
@@ -154,7 +155,7 @@ export function decoderName() {
 /**
  * Decode a file and measure it.
  *
- * Both levels and tempo come out of the one decode. Decoding is by far the
+ * Levels, tempo and key all come out of the one decode. Decoding is by far the
  * expensive part; once the samples are in hand, reading a tempo off them costs
  * a fraction of what getting them cost, so doing it twice would be the only
  * wasteful choice available.
@@ -209,5 +210,9 @@ export async function decodeAndMeasure(file, report) {
   stats.decodedSeconds = audio.duration;
   stats.containerSeconds = report.duration.seconds ?? null;
 
-  return { stats, tempo: estimateTempo(channelData, { sampleRate: audio.sampleRate }) };
+  return {
+    stats,
+    tempo: estimateTempo(channelData, { sampleRate: audio.sampleRate }),
+    key: estimateKey(channelData, { sampleRate: audio.sampleRate }),
+  };
 }

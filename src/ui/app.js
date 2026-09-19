@@ -194,9 +194,10 @@ async function measureLevelsFor(report) {
     throw new Error('The original file is no longer available in this session. Check it again to measure its levels.');
   }
 
-  const { stats, tempo } = await decodeAndMeasure(file, report);
+  const { stats, tempo, key } = await decodeAndMeasure(file, report);
   report.audio = stats;
   if (tempo) report.tempo.measured = tempo;
+  if (key) report.key = key;
   report.observations = runRules(report);
 
   // A logged copy of this report should gain the levels too, if it is in the
@@ -208,6 +209,7 @@ async function measureLevelsFor(report) {
           if (entry.report?.id === report.id) {
             entry.report.audio = stats;
             if (tempo) entry.report.tempo.measured = tempo;
+            if (key) entry.report.key = key;
             entry.observations = report.observations.map((o) => ({
               id: o.id, ruleId: o.ruleId, severity: o.severity, title: o.title, detail: o.detail,
             }));
@@ -250,9 +252,10 @@ async function measureAllLevels() {
     try {
       const file = state.files.get(report.id);
       if (!file) throw new Error('file no longer available');
-      const { stats, tempo } = await decodeAndMeasure(file, report);
+      const { stats, tempo, key } = await decodeAndMeasure(file, report);
       report.audio = stats;
       if (tempo) report.tempo.measured = tempo;
+      if (key) report.key = key;
       report.observations = runRules(report);
     } catch {
       failed++;
@@ -506,9 +509,10 @@ async function decodePass(reports, { fill, text }) {
     try {
       const file = state.files.get(report.id);
       if (!file) continue;
-      const { stats, tempo } = await decodeAndMeasure(file, report);
+      const { stats, tempo, key } = await decodeAndMeasure(file, report);
       report.audio = stats;
       if (tempo) report.tempo.measured = tempo;
+      if (key) report.key = key;
       report.observations = runRules(report);
     } catch (err) {
       // Record why, on the report, so the reader is not left wondering where

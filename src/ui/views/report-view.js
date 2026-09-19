@@ -85,6 +85,8 @@ export function renderReportCard(report, {
     else body.append(measureOffer(report, onMeasureLevels));
     const tempo = tempoSection(report, !expandAll);
     if (tempo) body.append(tempo);
+    const key = keySection(report, !expandAll);
+    if (key) body.append(key);
     const meta = metadataSections(report, !expandAll);
     for (const s of meta) body.append(s);
     body.append(chunkSection(report));
@@ -287,6 +289,23 @@ function factStrip(report) {
     facts.push(['Tempo', null, 'not established']);
   }
 
+  // The key tile leads with the NOTES, not the centre. Measured on a real
+  // recording the note collection follows a transposition 8 times in 10 and
+  // the centre 1 time in 10, so putting the centre in the headline position
+  // would be giving the least reliable half of the answer top billing.
+  const key = report.key;
+  if (key?.established) {
+    facts.push([
+      'Key',
+      key.name,
+      key.ambiguous
+        ? `or ${key.alternatives.map((a) => a.name).join(' / ')} \u2014 same notes`
+        : `${key.signature.name} \u00b7 estimated, ${key.confidence} confidence`,
+    ]);
+  } else if (key) {
+    facts.push(['Key', null, 'not established']);
+  }
+
   return el(
     'div',
     { class: 'facts' },
@@ -455,6 +474,67 @@ function tempoSection(report, collapsed) {
   }
 
   return section('Tempo', body, { open: !collapsed });
+}
+
+/**
+ * The key section, laid out around what the analysis can and cannot do.
+ *
+ * Which notes are being used comes first and is stated plainly. Which of them
+ * is home comes second, as a best guess, with every key sharing those notes
+ * named beside it — because C major and A minor contain exactly the same seven
+ * notes, and so do G Mixolydian and D Dorian.
+ */
+function keySection(report, collapsed) {
+  const key = report.key;
+  if (!key) return null;
+
+  const body = el('div', {});
+
+  if (!key.established) {
+    body.append(kv([['Key', 'not established'], ['Why not', key.reason]]));
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'Not every piece has one. ' }),
+      'Percussion, atonal material and heavily processed sound have no key to find, '
+      + 'and saying so is more use than a name you cannot rely on.',
+    ]));
+    return section('Key', body, { open: !collapsed });
+  }
+
+  body.append(kv([
+    ['Notes used', `${key.signature.notes.join(' ')}  (${key.signature.name})`],
+    ['Likely key', key.name],
+    // undefined rather than null: kv() renders a null as a dash, which would
+    // put "—" against questions that simply do not apply to this file.
+    ['Or equally', key.ambiguous
+      ? `${key.alternatives.map((a) => a.name).join(', ')} \u2014 the same seven notes`
+      : undefined],
+    ['Confidence', key.confidence],
+    ['Through the piece', key.sections.length >= 2
+      ? (key.steady ? 'settles in one place throughout' : 'moves between sections')
+      : undefined],
+    ['Starts in', key.sections.length >= 2 ? key.startsIn : undefined],
+    ['Ends in', key.sections.length >= 2 ? key.endsIn : undefined],
+    ['Pitched energy on those notes', `${(key.concentration * 100).toFixed(0)}% (${Math.round(100 * (7 / 12))}% would land there by chance)`],
+    ['How', key.method],
+  ]));
+
+  const named = key.sections.filter((s) => s.name);
+  if (named.length >= 2 && !key.steady) {
+    body.append(el('h4', { text: `Key through the piece, every ${key.sectionSeconds} seconds` }));
+    body.append(table(
+      ['At', 'Key'],
+      named.map((s) => [clockMinutes(s.startSeconds), s.name]),
+    ));
+  }
+
+  if (key.limits?.length) {
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'What this is, and is not. ' }),
+      key.limits.join(' '),
+    ]));
+  }
+
+  return section('Key', body, { open: !collapsed });
 }
 
 /** m:ss, for marking a position in a piece rather than timing an edit. */
