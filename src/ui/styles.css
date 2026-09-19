@@ -756,3 +756,96 @@ pre.raw {
   body { background: #fff; color: #000; }
   .report { break-inside: avoid; border-color: #999; }
 }
+
+
+/* ------------------------------------------------- "what is this?" icons */
+
+/*
+ * A hairline circle with an i in it. It has to read as available without
+ * competing with the number it sits beside, so at rest it is nearly as faint
+ * as the label it follows, and it comes up to full strength on hover.
+ */
+.info-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  margin-left: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  opacity: .42;
+  font-family: inherit;
+  font-size: 9px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: help;
+  vertical-align: middle;
+  transition: opacity .12s, color .12s;
+  flex: none;
+}
+.info-dot::before { content: "i"; }
+.info-dot:hover,
+.info-dot[aria-expanded="true"] { opacity: 1; color: var(--accent); }
+.info-dot:focus-visible {
+  opacity: 1;
+  color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* In a section heading the dot must not inherit the summary's pointer or its
+   hover colour, which belong to the expand/collapse behaviour, not to this. */
+.detail-section > summary .info-dot { margin-left: 7px; }
+
+.info-pop {
+  position: fixed;
+  z-index: 120;
+  width: min(330px, calc(100vw - 16px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  padding: 13px 15px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .38);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+.info-pop-title {
+  margin: 0 20px 5px 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+.info-pop-lead { margin: 0 0 9px; color: var(--text); font-weight: 550; }
+.info-pop p { margin: 0 0 9px; color: var(--text-dim); }
+.info-pop p:last-child { margin-bottom: 0; }
+.info-pop-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.info-pop-close:hover { color: var(--text); }
+
+@media (prefers-reduced-motion: reduce) {
+  .info-dot { transition: none; }
+}

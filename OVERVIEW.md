@@ -91,6 +91,25 @@ it took, so a scanned reading is never confused with a decoded one. A file past
 the memory guard is left alone, and the report says why rather than taking the
 browser down.
 
+### "What is this?"
+
+Every term a report uses that is not self-evident carries a small "i" next to
+it. Clicking it opens a short explanation — what the thing is, and why it is
+worth knowing — written for someone who does not already work in audio.
+
+The report itself keeps the vocabulary of the trade. Renaming "true peak" to
+something gentler would make it useless to the engineer it is aimed at, so the
+explanation sits beside the term rather than replacing it, silent until asked
+for.
+
+Icons appear only where a definition exists, which keeps them scarce by
+construction rather than by restraint: 45 terms have one, and labels like "File
+size" do not. And the definitions follow the same rule as the rest of the app —
+they say what a measurement is, never what it ought to be. A test holds the
+glossary to the same banned-language standard as the observation rules, because
+it is the one place an opinion would carry the most weight: somebody opened the
+popover precisely because they did not already know.
+
 ### Loudness
 
 Integrated loudness, loudness range and true peak, to ITU-R BS.1770-4 and EBU

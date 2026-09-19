@@ -13,6 +13,8 @@
  * building should be composed from el() calls, as the help tab does.
  */
 
+import { lookUpTerm } from './glossary.js';
+
 export function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
@@ -45,7 +47,7 @@ export function kv(pairs) {
   const dl = el('dl', { class: 'kv' });
   for (const [label, value, opts = {}] of pairs) {
     if (value === undefined) continue;
-    dl.append(el('dt', { text: label }));
+    dl.append(el('dt', {}, labelWithInfo(label)));
     const known = value !== null && value !== '' && value !== '—';
     dl.append(
       el('dd', {
@@ -59,7 +61,7 @@ export function kv(pairs) {
 
 /** Collapsible section. */
 export function section(title, body, { open = false, count = null } = {}) {
-  const summary = el('summary', {}, [title]);
+  const summary = el('summary', {}, labelWithInfo(title));
   if (count !== null) summary.append(el('span', { class: 'count', text: ` ${count}` }));
   return el('details', { class: 'detail-section', open }, [summary, el('div', { class: 'detail-body' }, [body])]);
 }
@@ -92,6 +94,165 @@ export function table(headers, rows, { rowClass = null, onRowClick = null } = {}
   });
   return el('div', { class: 'table-scroll' }, [el('table', { class: 'data' }, [thead, tbody])]);
 }
+
+// ------------------------------------------------------- what is this?
+
+/**
+ * The "i" that explains a term.
+ *
+ * The report is written in the vocabulary of the trade, and it stays that way:
+ * renaming "true peak" to something gentler would make it useless to the people
+ * who most need it. So the explanation sits beside the term instead, silent
+ * until asked for.
+ *
+ * Returns null when nothing has been written for this label, which is what
+ * keeps the icons scarce. They appear exactly where there is something to say,
+ * and no call site has to decide.
+ *
+ * @param {string} label the label already on screen
+ * @returns {HTMLButtonElement|null}
+ */
+export function infoDot(label) {
+  const term = lookUpTerm(label);
+  if (!term) return null;
+
+  const button = el('button', {
+    type: 'button',
+    class: 'info-dot',
+    // Screen readers get the question, not the letter "i" on its own.
+    'aria-label': `What is ${term.title}?`,
+    'aria-expanded': 'false',
+    // The glyph is drawn by CSS rather than set as text. A text node here would
+    // land inside the label, so selecting and copying a report off the screen
+    // would pick up a stray "i" after every term that has one, and every test
+    // that reads a label would have to know about it.
+  });
+
+  button.addEventListener('click', (event) => {
+    // Both matter, and for different reasons. preventDefault stops a dot inside
+    // a <summary> from collapsing the section it is explaining; stopPropagation
+    // stops the document-level dismissal below from treating this very click as
+    // a click elsewhere and closing the popover as fast as it opened.
+    event.preventDefault();
+    event.stopPropagation();
+    if (openInfo?.button === button) closeInfo();
+    else showInfo(button, term);
+  });
+
+  return button;
+}
+
+/**
+ * A label with its icon after it, ready to drop into any element.
+ * Returns a plain array so the caller can spread it into el()'s children.
+ */
+export function labelWithInfo(label) {
+  // kv() and section() are general helpers and a caller may hand either one a
+  // built node rather than a string. Pass it through untouched: stringifying a
+  // node would put "[object HTMLDivElement]" on the screen.
+  if (label instanceof Node) return [label];
+  const dot = infoDot(label);
+  return dot ? [String(label), dot] : [String(label)];
+}
+
+let openInfo = null;
+
+export function closeInfo() {
+  if (!openInfo) return;
+  openInfo.node.remove();
+  openInfo.button.setAttribute('aria-expanded', 'false');
+  openInfo = null;
+}
+
+function showInfo(button, term) {
+  closeInfo();
+
+  const node = el('div', {
+    class: 'info-pop',
+    role: 'dialog',
+    'aria-label': term.title,
+  }, [
+    el('button', {
+      type: 'button',
+      class: 'info-pop-close',
+      'aria-label': 'Close',
+      text: '\u00d7',
+      onclick: (e) => { e.stopPropagation(); closeInfo(); button.focus(); },
+    }),
+    el('h4', { class: 'info-pop-title', text: term.title }),
+    el('p', { class: 'info-pop-lead', text: term.lead }),
+    ...term.body.map((paragraph) => el('p', { text: paragraph })),
+  ]);
+
+  // Clicks inside stay inside, so selecting text does not dismiss it.
+  node.addEventListener('click', (e) => e.stopPropagation());
+
+  document.body.append(node);
+  // Measured once. Reading offsetWidth forces layout, and the reposition below
+  // can run on every scroll event.
+  const size = { width: node.offsetWidth, height: node.offsetHeight };
+  positionInfo(node, button, size);
+  button.setAttribute('aria-expanded', 'true');
+  openInfo = { node, button, size };
+}
+
+/**
+ * Put the popover under its icon, or above it when there is no room below,
+ * and never off the side of the window.
+ *
+ * Deliberately hand-positioned. The browser's own popover and anchor
+ * positioning would do this in a few lines, and neither exists in the Safari
+ * that ships with the macOS this app is built for.
+ */
+function positionInfo(node, button, size) {
+  const gap = 6;
+  const edge = 8;
+  const anchor = button.getBoundingClientRect();
+  const { width, height } = size;
+
+  let left = anchor.left + anchor.width / 2 - width / 2;
+  left = Math.max(edge, Math.min(left, window.innerWidth - width - edge));
+
+  let top = anchor.bottom + gap;
+  if (top + height > window.innerHeight - edge) {
+    const above = anchor.top - height - gap;
+    top = above >= edge ? above : Math.max(edge, window.innerHeight - height - edge);
+  }
+
+  node.style.left = `${Math.round(left)}px`;
+  node.style.top = `${Math.round(top)}px`;
+}
+
+// Anything else the user does puts it away again.
+document.addEventListener('click', () => closeInfo());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeInfo(); });
+
+/**
+ * Follow the icon on scroll rather than closing.
+ *
+ * Closing was the first attempt and it was wrong twice over. Focusing a button
+ * near the edge of the window makes the browser scroll it into view, so the
+ * popover shut itself the instant it opened for any icon not already fully
+ * visible — which is most of them in a long report. And as behaviour it is
+ * simply worse: the natural thing to do while reading an explanation is to
+ * scroll the thing it explains back into view.
+ *
+ * It does give up once its icon has left the window, since a popover pointing
+ * at nothing is worse than no popover.
+ */
+function trackInfo() {
+  if (!openInfo) return;
+  const anchor = openInfo.button.getBoundingClientRect();
+  const offScreen = anchor.bottom < 0
+    || anchor.top > window.innerHeight
+    || anchor.right < 0
+    || anchor.left > window.innerWidth;
+  if (offScreen) closeInfo();
+  else positionInfo(openInfo.node, openInfo.button, openInfo.size);
+}
+
+window.addEventListener('scroll', trackInfo, true);
+window.addEventListener('resize', trackInfo);
 
 // ------------------------------------------------------------------ toasts
 

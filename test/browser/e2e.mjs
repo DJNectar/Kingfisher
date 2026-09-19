@@ -118,6 +118,12 @@ const expect = (label, re, text = bodyText) => {
   console.log(`  ${ok ? 'OK  ' : 'FAIL'} ${label}`);
   if (!ok) failures.push(label);
 };
+/** For assertions about counts and flags rather than about text. */
+const expectIs = (label, actual, wanted) => {
+  const ok = Object.is(actual, wanted);
+  console.log(`  ${ok ? 'OK  ' : 'FAIL'} ${label}`);
+  if (!ok) failures.push(`${label} (got ${actual}, wanted ${wanted})`);
+};
 
 expect('48 kHz on riverbed', /48 kHz/);
 expect('24-bit', /24-bit/);
@@ -498,6 +504,56 @@ step('Loudness: LUFS, range, and an over that is not in any sample');
   expect('no target is stated', /^(?!.*\b(too loud|should be|target level)\b).*$/is, loud);
 
   await page.screenshot({ path: join(HERE, 'shot-loudness.png'), fullPage: false });
+}
+
+step('Explaining a term: the "i" icons');
+{
+  // Carries on from the loudness file already on screen.
+  const card = page.locator('.report').first();
+
+  // Scarce by construction: an icon exists only where something was written.
+  const dots = await card.locator('.info-dot').count();
+  expectIs('terms carry an explain icon', dots > 5, true);
+  const fileSizeTile = card.locator('.fact', { hasText: 'FILE SIZE' }).first();
+  expectIs('a self-evident label has none', await fileSizeTile.locator('.info-dot').count(), 0);
+
+  // Open the one on the true peak tile.
+  const tpDot = card.locator('.fact', { hasText: 'TRUE PEAK' }).first().locator('.info-dot');
+  expectIs('the true peak tile has one', await tpDot.count(), 1);
+  await tpDot.click();
+  await page.waitForTimeout(200);
+
+  const pop = page.locator('.info-pop');
+  expectIs('a popup opens', await pop.count(), 1);
+  const popText = await pop.innerText();
+  expect('it names the term', /True peak/, popText);
+  expect('it explains it in plain words', /between the samples/i, popText);
+  expect('it states no target', /^(?!.*\b(target|too loud|should be|spotify)\b).*$/is, popText);
+  expectIs('it is on screen', await pop.isVisible(), true);
+
+  // Escape puts it away.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  expectIs('Escape closes it', await page.locator('.info-pop').count(), 0);
+
+  // An icon inside a section heading must explain, not collapse.
+  const loudSection = card.locator('.detail-section:has-text("Loudness")').first();
+  const wasOpen = (await loudSection.getAttribute('open')) !== null;
+  await loudSection.locator('summary .info-dot').click();
+  await page.waitForTimeout(200);
+  expectIs('the heading icon opens a popup', await page.locator('.info-pop').count(), 1);
+  expectIs(
+    'and does not collapse the section it explains',
+    (await loudSection.getAttribute('open')) !== null,
+    wasOpen,
+  );
+
+  await page.screenshot({ path: join(HERE, 'shot-info.png'), fullPage: false });
+
+  // Clicking elsewhere dismisses it.
+  await page.locator('h1, .report-title').first().click();
+  await page.waitForTimeout(150);
+  expectIs('clicking away closes it', await page.locator('.info-pop').count(), 0);
 }
 
 console.log('\n=== RESULT ===');

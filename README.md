@@ -85,6 +85,14 @@ Some deliberate absences:
 Adding a format is a new module in `src/core/parsers/` plus a
 `registerParser()` call — no changes to the UI, rules or exporters.
 
+**Plain-language definitions.** Terms like true peak, LUFS, valid bits and
+Mixolydian carry a small "i" beside them; clicking it explains what the term
+means in ordinary words. The report keeps the vocabulary of the trade — renaming
+things would make it useless to the people who need it most — so the explanation
+sits beside the term instead. The icons appear only where a definition has been
+written, which keeps them scarce, and the definitions are held to the same rule
+as everything else: they say what a thing is, never what it should be.
+
 **Loudness.** Integrated loudness in LUFS, loudness range in LU and true peak
 in dBTP, to ITU-R BS.1770-4 and EBU Tech 3342 — the measurements every delivery
 spec in music, broadcast and podcasting is actually written in. Peak alone

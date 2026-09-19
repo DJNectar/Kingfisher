@@ -8,7 +8,7 @@
  *   4. Everything else, collapsed: metadata, levels per channel, chunk map.
  */
 
-import { el, kv, section, table, toast } from '../dom.js';
+import { el, kv, section, table, toast, labelWithInfo } from '../dom.js';
 import { decodeAvailability } from '../../core/audio/decode.js';
 import { PARSE_STATUS } from '../../core/report.js';
 // Imported rather than reimplemented, so the wording on screen is identical to
@@ -337,7 +337,7 @@ function factStrip(report) {
     { class: 'facts' },
     facts.map(([label, value, note]) =>
       el('div', { class: 'fact' }, [
-        el('div', { class: 'fact-label', text: label }),
+        el('div', { class: 'fact-label' }, labelWithInfo(label)),
         el('div', { class: `fact-value${value ? '' : ' unknown'}`, text: value ?? UNKNOWN }),
         note ? el('div', { class: 'fact-note', text: note }) : null,
       ]),
