@@ -198,6 +198,18 @@ main { padding: 20px; max-width: 1180px; margin: 0 auto; }
 .drop-hint { color: var(--text-faint); font-size: 12.5px; }
 .pick-target { margin: 0; font-size: 13px; color: var(--text-dim); }
 
+/* The build stamp: present enough to read when you go looking, quiet enough
+   not to compete with anything. */
+.build-stamp {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
 select, input[type="text"], textarea {
   background: var(--bg-sunken);
   color: var(--text);

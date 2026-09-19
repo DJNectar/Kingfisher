@@ -23,6 +23,8 @@ import {
   createLibrary,
   LIBRARY_FILE_EXTENSION,
   LibraryFormatError,
+  APP_VERSION,
+  BUILD_DATE,
 } from '../store/schema.js';
 import {
   capabilities,
@@ -103,6 +105,17 @@ const actions = {
   },
 };
 
+/**
+ * Stamp the build into the header.
+ *
+ * Cheap, and it settles the question that otherwise costs a round trip: is
+ * this the new copy, or a stale folder, or Chrome serving cached modules?
+ */
+function renderBuildStamp() {
+  const host = $('#build-stamp');
+  if (host) host.textContent = `v${APP_VERSION} · build ${BUILD_DATE}`;
+}
+
 // ------------------------------------------------------------------- render
 
 function render() {
@@ -116,6 +129,7 @@ function render() {
   $('#view-help').hidden = state.view !== 'help';
 
   renderLibraryBar();
+  renderBuildStamp();
 
   if (state.view === 'inspect') renderInspect();
   if (state.view === 'clients') renderClients($('#clients-content'), { library: state.library, nav: state.nav, actions });

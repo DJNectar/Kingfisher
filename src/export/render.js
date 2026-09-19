@@ -21,7 +21,7 @@ import {
 } from '../core/format.js';
 import { PARSE_STATUS } from '../core/report.js';
 import { SEVERITY_LABELS } from '../core/qc/severity.js';
-import { APP_VERSION } from '../store/schema.js';
+import { APP_VERSION, BUILD_DATE } from '../store/schema.js';
 
 const RULE = '='.repeat(72);
 const THIN = '-'.repeat(72);
@@ -116,7 +116,7 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
 
   lines.push('');
   lines.push(THIN);
-  lines.push(`Kingfisher ${APP_VERSION} — read-only report. Nothing in the audio file was changed.`);
+  lines.push(`Kingfisher ${APP_VERSION} (build ${BUILD_DATE}) — read-only report. Nothing in the audio file was changed.`);
   return lines.join('\n');
 }
 
