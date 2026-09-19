@@ -57,41 +57,72 @@ To use it again later, double-click start.command again.
 IF IT WON'T START THE FIRST TIME
 ------------------------------------------------------------------
 
-macOS is suspicious of anything downloaded from the internet, so the
-first launch may be blocked. There are three things it might say.
-All three are one-time fixes.
+macOS marks anything downloaded from the internet as untrusted, so the
+first launch is usually blocked. This is not a warning about
+Kingfisher specifically — macOS says it about every unsigned file, and
+it cannot tell the difference between a program that is dangerous and
+one that simply has not paid Apple's developer fee.
 
-  "start.command cannot be opened because it is from an
-   unidentified developer"
+THE ONE FIX THAT ALWAYS WORKS
 
-    Right-click (or Control-click) start.command and choose Open
-    from the menu, then click Open in the box that appears. You only
-    have to do this once — after that, double-clicking works.
+Do this once and none of the rest of this section will ever apply.
+It strips the "downloaded from the internet" marker off the folder.
 
-    If there's no Open button, go to the Apple menu > System
-    Settings > Privacy & Security, scroll down, and click
-    "Open Anyway". On older Macs that's System Preferences >
-    Security & Privacy > General.
+  1. Open Terminal (Applications > Utilities > Terminal)
+  2. Type this, including the space at the end:
 
-  "permission denied"
+         xattr -cr 
 
-    The zip lost the flag that marks the file as runnable. To put it
-    back, open Terminal (Applications > Utilities > Terminal), type
-    this, with a space after the x:
+  3. DRAG the Kingfisher folder from Finder into the Terminal window.
+     It will fill in the path for you.
+  4. Press Return.
 
-        chmod +x 
+Nothing will appear to happen. That is correct — it is silent when it
+works. Now double-click start.command and it will open, this time and
+every time.
 
-    ...then DRAG the start.command file from Finder into the
-    Terminal window — it'll fill in the path for you — and press
-    Return. Nothing will appear to happen. That's correct. Now
+IF YOU WOULD RATHER NOT USE TERMINAL
+
+What you do depends on which dialog you get.
+
+  A dialog saying "Apple could not verify start.command is free of
+  malware", with only "Done" and "Move to Bin":
+
+    Click Done. Then go to the Apple menu > System Settings >
+    Privacy & Security, scroll down to the Security section, and look
+    for "start.command was blocked to protect your Mac" with an
+    "Open Anyway" button beside it. Click that, authenticate, then
     double-click start.command again.
 
-  A box asking to install "command line developer tools"
+    That button only appears for about an hour after the block, so if
+    you leave it and come back, double-click the file again first to
+    make it reappear.
 
-    Click Install and wait for it to finish (a few minutes), then
-    double-click start.command again. Kingfisher uses a small piece
-    of software Apple ships with every Mac, and this is macOS
-    fetching it on first use.
+  A dialog saying "start.command cannot be opened because it is from
+  an unidentified developer", with an option to Cancel:
+
+    This is the older wording. Right-click (or Control-click)
+    start.command in Finder and choose Open from the menu, then click
+    Open in the box that appears. Right-clicking is what makes the
+    difference — double-clicking the same file will keep refusing.
+
+  "permission denied" in a Terminal window:
+
+    The zip lost the flag marking the file as runnable. Open Terminal,
+    type "chmod +x " (with the space), drag start.command into the
+    window, and press Return.
+
+  A box asking to install "command line developer tools":
+
+    Click Install, wait for it to finish, then try again. Kingfisher
+    uses a small piece of software Apple ships with every Mac, and
+    this is macOS fetching it on first use.
+
+A NOTE IF SOMEONE SENT YOU THIS FOLDER
+
+The quarantine comes from downloading, not from the folder itself. If
+it reaches you by AirDrop, on a USB stick, or over a local network,
+macOS usually does not mark it at all and it will simply open.
 
 
 YOUR FIRST TWO MINUTES
