@@ -291,6 +291,7 @@ function renderKey(report) {
     lines.push(row('Starts in', key.startsIn));
     lines.push(row('Ends in', key.endsIn));
   }
+  lines.push(row('How tonal', `${key.tonalStrength.label} \u2014 ${key.tonalStrength.detail}`));
   lines.push(row('Pitched energy on those notes', `${(key.concentration * 100).toFixed(0)}%, against 58% by chance`));
   lines.push(row('How', key.method));
 

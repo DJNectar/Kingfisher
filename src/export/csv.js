@@ -100,6 +100,7 @@ const COLUMNS = [
     ? r.key.alternatives.map((a) => a.name).join(' / ')
     : null)],
   ['Key confidence', (r) => (r.key?.established ? r.key.confidence : null)],
+  ['How tonal', (r) => (r.key?.established ? r.key.tonalStrength.label : null)],
 
   ['Observations', (r) => r.observations.length],
   ['Needs a look', (r) => r.observations.filter((o) => o.severity === 'attention').map((o) => o.title).join(' | ')],

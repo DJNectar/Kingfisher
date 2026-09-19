@@ -419,26 +419,77 @@ select:focus, input:focus, textarea:focus, .btn:focus-visible, .tab:focus-visibl
 .measure-offer p { color: var(--text-dim); }
 .measure-offer strong { color: var(--text); }
 
-/* Detail sections */
+/* Detail sections
+ *
+ * The heading of a collapsible section has to LOOK like something you can
+ * press. It previously carried a 10px faint "▸" and nothing else, which people
+ * did not read as a control at all — sections stayed shut because nobody knew
+ * they opened.
+ *
+ * So: a chevron large enough to see, inside a bordered box that reads as a
+ * button, the whole row highlighting on hover, and the word Show or Hide
+ * spelled out on the right. Between them there is no way to look at one of
+ * these and not know it opens.
+ */
 .detail-section { border-top: 1px solid var(--border); }
 .detail-section > summary {
   cursor: pointer;
-  padding: 10px 2px;
+  padding: 11px 8px 11px 4px;
+  margin: 0 -8px 0 -4px;
+  border-radius: var(--radius);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 13.5px;
   list-style: none;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 10px;
+  transition: background .12s;
+}
+.detail-section > summary:hover { background: var(--bg-sunken); }
+.detail-section > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .detail-section > summary::-webkit-details-marker { display: none; }
+
+/* The chevron, in a box you can see. */
 .detail-section > summary::before {
-  content: "▸";
-  color: var(--text-faint);
-  font-size: 10px;
-  transition: transform .12s;
+  content: "›";
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  /* The glyph sits high in its line box; nudge it back onto the centre. */
+  font: 700 19px/1 var(--sans);
+  padding-bottom: 2px;
+  transform: rotate(90deg);
+  transition: transform .15s ease, color .12s, border-color .12s;
 }
-.detail-section[open] > summary::before { transform: rotate(90deg); }
+.detail-section[open] > summary::before { transform: rotate(-90deg); }
+.detail-section > summary:hover::before {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+/* And the word for it, so nothing rests on recognising an icon. */
+.detail-section > summary::after {
+  content: "Show";
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.detail-section[open] > summary::after { content: "Hide"; }
+.detail-section > summary:hover::after { color: var(--accent); }
+
 .detail-section > summary .count { color: var(--text-faint); font-weight: 400; font-size: 12px; }
 .detail-body { padding: 2px 0 14px; }
 

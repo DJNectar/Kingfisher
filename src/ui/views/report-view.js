@@ -300,7 +300,7 @@ function factStrip(report) {
       key.name,
       key.ambiguous
         ? `or ${key.alternatives.map((a) => a.name).join(' / ')} \u2014 same notes`
-        : `${key.signature.name} \u00b7 estimated, ${key.confidence} confidence`,
+        : `${key.signature.name} \u00b7 ${key.tonalStrength.label}`,
     ]);
   } else if (key) {
     facts.push(['Key', null, 'not established']);
@@ -514,6 +514,7 @@ function keySection(report, collapsed) {
       : undefined],
     ['Starts in', key.sections.length >= 2 ? key.startsIn : undefined],
     ['Ends in', key.sections.length >= 2 ? key.endsIn : undefined],
+    ['How tonal', `${key.tonalStrength.label} \u2014 ${key.tonalStrength.detail}`],
     ['Pitched energy on those notes', `${(key.concentration * 100).toFixed(0)}% (${Math.round(100 * (7 / 12))}% would land there by chance)`],
     ['How', key.method],
   ]));

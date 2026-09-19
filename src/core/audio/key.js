@@ -137,6 +137,32 @@ const ESTABLISH_CONCENTRATION = 0.65;
 const HIGH_CONCENTRATION = 0.75;
 const MEDIUM_CONCENTRATION = 0.69;
 
+/**
+ * The concentration number, in words.
+ *
+ * "87%" and "68%" are the difference between a reading worth acting on and one
+ * barely above chance, and nobody should have to hold the 58.3% chance floor in
+ * their head to see that. Measured across real files: a clean produced track
+ * scored 87%, two live recordings scored 66% and 68%.
+ */
+const TONAL_STRENGTH = [
+  {
+    from: 0.80,
+    label: 'strongly tonal',
+    detail: 'the notes are a reliable reading',
+  },
+  {
+    from: 0.72,
+    label: 'clearly tonal',
+    detail: 'the notes are a sound reading',
+  },
+  {
+    from: 0,
+    label: 'weakly tonal',
+    detail: 'barely above what lands on a scale by chance \u2014 treat the key as a hint rather than a reading',
+  },
+];
+
 /** How close two centres must be before both are named instead of one chosen. */
 const AMBIGUOUS_WITHIN = 0.15;
 
@@ -428,6 +454,8 @@ export function keyFromChromagram(cg) {
      */
     signature: signatureOf(collection.root),
     concentration: collection.concentration,
+    /** What that number means, so the reader does not have to work it out. */
+    tonalStrength: TONAL_STRENGTH.find((band) => collection.concentration >= band.from),
 
     /** The likeliest tonal centre — the half chroma is weak at. */
     name: winner.name,
