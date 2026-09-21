@@ -63,6 +63,24 @@ algorithm can do is average them together. The fix is a simpler drawing —
 fewer shapes, heavier lines, fine detail dropped rather than shrunk. Good icon
 sets are drawn at several sizes, not scaled from one.
 
+## The launch screen's artwork
+
+The app shows a launch screen while the server starts, and it uses
+`src/ui/assets/splash.png`, which this script writes on every run.
+
+By default that is the icon, scaled to 256px. To use a different drawing,
+drop a `packaging/splash-source.png` beside the icon source and re-run:
+
+    ./packaging/make-icon.py
+
+It is used at whatever shape it is drawn in — square, wide, tall — scaled so
+its long edge is at most 640px. The stylesheet fits it inside a box rather than
+assuming dimensions, so nothing needs changing to match.
+
+Worth drawing separately rather than reusing the icon: a launch screen is a
+few hundred pixels across on a plain background, which is a different problem
+from a 32-pixel icon in a Dock. It can carry detail the icon cannot.
+
 ## What this does NOT fix
 
 **Gatekeeper.** An unsigned `.app` gets the same "Apple could not verify…"

@@ -889,12 +889,23 @@ pre.raw {
   text-align: center;
 }
 
-/* The bird, with the glow the icon's own artwork carries behind it. */
+/*
+ * The launch artwork, with the glow the icon carries behind it.
+ *
+ * Sized as a BOX the image is fitted inside rather than as fixed dimensions,
+ * so a square icon and a wide banner both land correctly without the
+ * stylesheet needing to know which one is in the file. `contain` keeps
+ * whatever aspect ratio the artist drew.
+ *
+ * The file is always assets/splash.png. packaging/make-icon.py writes it from
+ * packaging/splash-source.png when that exists and from the icon when it does
+ * not, so this never points at a file that is missing.
+ */
 .splash-mark {
   position: relative;
-  width: 132px;
-  height: 132px;
-  background: url("assets/kingfisher-256.png") center / contain no-repeat;
+  width: min(300px, 64vw);
+  height: 150px;
+  background: url("assets/splash.png") center / contain no-repeat;
   animation: splash-rise .52s cubic-bezier(.2, .8, .3, 1) both;
 }
 .splash-mark::before {
@@ -968,7 +979,7 @@ pre.raw {
    rather than letting the block overflow. */
 @media (max-height: 420px) {
   .splash-sub { display: none; }
-  .splash-mark { width: 96px; height: 96px; }
+  .splash-mark { height: 96px; }
 }
 
 /* -------------------------------------------------------- batch table */

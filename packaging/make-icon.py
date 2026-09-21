@@ -130,13 +130,23 @@ def write_png(width, height, rgba):
 # ------------------------------------------------------------------ resize
 def resize(src_w, src_h, rgba, size):
     """Box-filter down to size x size, averaging premultiplied alpha."""
-    out = bytearray(size * size * 4)
-    for oy in range(size):
-        y0 = oy * src_h // size
-        y1 = max(y0 + 1, (oy + 1) * src_h // size)
-        for ox in range(size):
-            x0 = ox * src_w // size
-            x1 = max(x0 + 1, (ox + 1) * src_w // size)
+    return resize_box(src_w, src_h, rgba, size, size)
+
+
+def resize_box(src_w, src_h, rgba, out_w, out_h):
+    """As resize, to any width and height.
+
+    The icon is always square, but a launch image need not be, and forcing one
+    into a square would either stretch the artwork or crop it - both of which
+    are decisions belonging to whoever drew it, not to this script.
+    """
+    out = bytearray(out_w * out_h * 4)
+    for oy in range(out_h):
+        y0 = oy * src_h // out_h
+        y1 = max(y0 + 1, (oy + 1) * src_h // out_h)
+        for ox in range(out_w):
+            x0 = ox * src_w // out_w
+            x1 = max(x0 + 1, (ox + 1) * src_w // out_w)
 
             r = g = b = a = 0
             count = 0
@@ -153,7 +163,7 @@ def resize(src_w, src_h, rgba, size):
                     a += alpha
                     count += 1
 
-            o = (oy * size + ox) * 4
+            o = (oy * out_w + ox) * 4
             if a == 0:
                 out[o:o + 4] = b'\x00\x00\x00\x00'
             else:
@@ -226,6 +236,40 @@ def icns(images):
     return b'icns' + struct.pack('>I', len(body) + 8) + body
 
 
+def write_splash(assets, width, height, rgba):
+    """The launch screen's artwork.
+
+    Drop a `packaging/splash-source.png` beside the icon source and it is used
+    verbatim - any shape, not just square - because a launch screen is a
+    different canvas from a 32-pixel icon and deserves its own drawing. With no
+    such file the bird stands in, so the launch screen is never empty.
+
+    Either way the app only ever loads `assets/splash.png`, so there is no
+    fallback logic in the stylesheet and no way for the page to reference a
+    file that is not there.
+    """
+    target = assets / 'splash.png'
+    LONG_EDGE = 640
+
+    override = HERE / 'splash-source.png'
+    if override.exists():
+        sw, sh, srgba = read_png(override)
+        if sw >= sh:
+            ow = min(LONG_EDGE, sw)
+            oh = max(1, round(sh * ow / sw))
+        else:
+            oh = min(LONG_EDGE, sh)
+            ow = max(1, round(sw * oh / sh))
+        data = srgba if (ow, oh) == (sw, sh) else resize_box(sw, sh, srgba, ow, oh)
+        target.write_bytes(write_png(ow, oh, data))
+        print(f'wrote src/ui/assets/splash.png  {ow}x{oh}  from splash-source.png')
+        return
+
+    data = sharpen(256, resize(width, height, rgba, 256), 0.35)
+    target.write_bytes(write_png(256, 256, data))
+    print('wrote src/ui/assets/splash.png  256x256  from the icon')
+
+
 if __name__ == '__main__':
     if not SOURCE.exists():
         sys.exit(f'missing {SOURCE}')
@@ -265,11 +309,11 @@ if __name__ == '__main__':
     # plainly the same thing. Small on purpose: it ships inside the app.
     assets = HERE.parent / 'src' / 'ui' / 'assets'
     assets.mkdir(parents=True, exist_ok=True)
-    for px, amount in ((128, 0.55), (256, 0.35)):
-        web = sharpen(px, resize(width, height, rgba, px), amount)
-        target = assets / f'kingfisher-{px}.png'
-        target.write_bytes(write_png(px, px, web))
-        print(f'wrote {target.relative_to(HERE.parent)}')
+    web = sharpen(128, resize(width, height, rgba, 128), 0.55)
+    (assets / 'kingfisher-128.png').write_bytes(write_png(128, 128, web))
+    print('wrote src/ui/assets/kingfisher-128.png')
+
+    write_splash(assets, width, height, rgba)
 
     (HERE / 'icon-512.png').write_bytes(write_png(512, 512, resize(width, height, rgba, 512)))
     print('wrote icon-512.png')
