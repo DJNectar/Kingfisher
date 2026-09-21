@@ -77,6 +77,14 @@ It is used at whatever shape it is drawn in — square, wide, tall — scaled so
 its long edge is at most 640px. The stylesheet fits it inside a box rather than
 assuming dimensions, so nothing needs changing to match.
 
+The current `splash-source.png` was recovered from a copy that had been
+re-encoded in transit: resized to 1024px, compressed lossily, and flattened
+onto black where the original carried transparency. The surrounding black was
+keyed back out by flooding inwards from the edges (by connectivity, not by a
+plain colour test, so dark pixels inside the drawing are never punched
+through), then the empty margin was trimmed. If the original artwork turns up
+intact, replace this file with it and re-run — it will be sharper.
+
 Worth drawing separately rather than reusing the icon: a launch screen is a
 few hundred pixels across on a plain background, which is a different problem
 from a 32-pixel icon in a Dock. It can carry detail the icon cannot.
