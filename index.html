@@ -10,6 +10,26 @@
 </head>
 <body>
 
+<!--
+  Launch screen.
+
+  Deliberately has no JavaScript behind it. It runs on a fixed CSS timeline and
+  clears itself, so a script that fails to load or throws on the way up cannot
+  leave somebody staring at a bird forever. It is also pointer-events:none
+  throughout, which means the app underneath is live and clickable the whole
+  time it is fading - the splash covers the wait, it never causes one.
+-->
+<div class="splash" aria-hidden="true">
+  <div class="splash-inner">
+    <div class="splash-mark"></div>
+    <div class="splash-word">Kingfisher</div>
+    <svg class="splash-wave" viewBox="0 0 240 28" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <path d="M0 14 L8 14 L14 8 L20 20 L26 12 L32 16 L40 4 L46 24 L52 10 L58 18 L66 14 L74 6 L80 22 L86 11 L92 17 L100 2 L106 26 L112 9 L118 19 L126 14 L134 7 L140 21 L146 12 L152 16 L160 5 L166 23 L172 10 L178 18 L186 14 L194 9 L200 19 L206 13 L212 15 L220 11 L226 17 L234 14 L240 14"/>
+    </svg>
+    <div class="splash-sub">Reports what is in your audio files</div>
+  </div>
+</div>
+
 <header class="app-bar">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"></span>

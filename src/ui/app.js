@@ -49,7 +49,7 @@ import {
 } from '../export/render.js';
 import { reportsToCsv, historyToCsv } from '../export/csv.js';
 import { textToPdfBlob } from '../export/pdf.js';
-import { renderReportCard } from './views/report-view.js';
+import { renderReportCard, renderBatchTable } from './views/report-view.js';
 import { decodeAndMeasure, decodeAvailability } from '../core/audio/decode.js';
 import { runRules } from '../core/qc/engine.js';
 import { renderClients } from './views/clients-view.js';
@@ -182,7 +182,12 @@ function renderInspect() {
 
   if (!state.reports.length) return;
 
-  if (state.reports.length > 1) results.append(batchSummary(state.reports));
+  if (state.reports.length > 1) {
+    results.append(batchSummary(state.reports));
+    // The table answers "which one"; the cards below answer "why". Clicking a
+    // row takes you from the first question to the second.
+    results.append(renderBatchTable(state.reports, { onPick: revealReport }));
+  }
 
   for (const report of state.reports) {
     results.append(
@@ -193,6 +198,20 @@ function renderInspect() {
       }),
     );
   }
+}
+
+/**
+ * Scroll to a file's report card and mark it, so the eye lands on the right
+ * one in a stack of two hundred.
+ */
+function revealReport(report) {
+  const card = document.getElementById(`report-${report.id}`);
+  if (!card) return;
+  const open = card.querySelector('details.detail-section');
+  if (open) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  else card.scrollIntoView({ block: 'start' });
+  for (const other of document.querySelectorAll('.report.targeted')) other.classList.remove('targeted');
+  card.classList.add('targeted');
 }
 
 /**

@@ -91,6 +91,24 @@ it took, so a scanned reading is never confused with a decoded one. A file past
 the memory guard is left alone, and the report says why rather than taking the
 browser down.
 
+### The batch table
+
+Check a folder and a sortable table appears above the report cards: one row per
+file, with format, rate, depth, channels, duration, peak, loudness, true peak,
+tempo, key and a count of anything found. Click a column to sort, click a row to
+jump to that file's full report.
+
+The table answers *which one*; the card answers *why*. A hundred files rendered
+as a hundred cards is a scroll, not a view, and the question at intake is always
+comparative.
+
+One rule in the sorting is worth stating, because getting it wrong would be
+invisible: **a value that could not be established sinks to the bottom whichever
+way a column is sorted.** Letting null fall through to a numeric comparison
+would make it zero, and a file whose loudness could not be measured would then
+win "quietest first" — the table inventing a measurement the report had
+deliberately refused to make.
+
 ### "What is this?"
 
 Every term a report uses that is not self-evident carries a small "i" next to

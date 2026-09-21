@@ -263,11 +263,13 @@ if __name__ == '__main__':
 
     # The same bird for the web app's favicon and header mark, so the two are
     # plainly the same thing. Small on purpose: it ships inside the app.
-    web = sharpen(128, resize(width, height, rgba, 128), 0.55)
-    target = HERE.parent / 'src' / 'ui' / 'assets' / 'kingfisher-128.png'
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(write_png(128, 128, web))
-    print(f'wrote {target.relative_to(HERE.parent)}')
+    assets = HERE.parent / 'src' / 'ui' / 'assets'
+    assets.mkdir(parents=True, exist_ok=True)
+    for px, amount in ((128, 0.55), (256, 0.35)):
+        web = sharpen(px, resize(width, height, rgba, px), amount)
+        target = assets / f'kingfisher-{px}.png'
+        target.write_bytes(write_png(px, px, web))
+        print(f'wrote {target.relative_to(HERE.parent)}')
 
     (HERE / 'icon-512.png').write_bytes(write_png(512, 512, resize(width, height, rgba, 512)))
     print('wrote icon-512.png')

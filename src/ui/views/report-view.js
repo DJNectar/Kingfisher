@@ -8,7 +8,8 @@
  *   4. Everything else, collapsed: metadata, levels per channel, chunk map.
  */
 
-import { el, kv, section, table, toast, labelWithInfo } from '../dom.js';
+import { el, kv, section, table, toast, labelWithInfo, clear } from '../dom.js';
+import { BATCH_COLUMNS, sortReports, findingCounts } from './batch-columns.js';
 import { decodeAvailability } from '../../core/audio/decode.js';
 import { PARSE_STATUS } from '../../core/report.js';
 // Imported rather than reimplemented, so the wording on screen is identical to
@@ -35,7 +36,7 @@ export function renderReportCard(report, {
   collapsedByDefault = false,
   onMeasureLevels = null,
 } = {}) {
-  const card = el('div', { class: 'report' });
+  const card = el('div', { class: 'report', id: `report-${report.id}` });
 
   // ---- head
   const badges = el('div', { class: 'btn-row' }, severityBadges(report));
@@ -343,6 +344,101 @@ function factStrip(report) {
       ]),
     ),
   );
+}
+
+
+// ------------------------------------------------------------ batch table
+
+/**
+ * One row per file, above the report cards.
+ *
+ * WHY. A batch of two hundred files rendered as two hundred cards is a
+ * scroll, not a view. The question somebody actually has at intake is
+ * comparative - which of these is the loudest, which are 44.1 rather than 48,
+ * which have something worth looking at - and a comparison needs a table.
+ *
+ * The cards stay. This sits above them and jumps to one when a row is
+ * clicked, so the table answers "which" and the card answers "why".
+ */
+/**
+ * @param {object[]} reports
+ * @param {{onPick?: (report: object) => void}} options
+ */
+const CELL_NODE = {
+  findings: (report) => {
+    const { attention, notice } = findingCounts(report);
+    if (!attention && !notice) return el('span', { class: 'batch-clear', text: '\u2014' });
+    return el('span', { class: 'batch-findings' }, [
+      attention ? el('span', { class: 'batch-count attention', text: String(attention) }) : null,
+      notice ? el('span', { class: 'batch-count notice', text: String(notice) }) : null,
+    ]);
+  },
+};
+
+export function renderBatchTable(reports, { onPick = null } = {}) {
+  // null means the order they were checked in, which is the order on disk and
+  // a meaningful default: it is what the folder looks like.
+  let sortKey = null;
+  let direction = 'asc';
+
+  const wrapper = el('div', { class: 'batch-table' });
+  const scroll = el('div', { class: 'table-scroll' });
+  const table = el('table', { class: 'data batch' });
+  const thead = el('thead');
+  const tbody = el('tbody');
+  table.append(thead, tbody);
+  scroll.append(table);
+
+  function draw() {
+    clear(thead);
+    clear(tbody);
+
+    thead.append(el('tr', {}, BATCH_COLUMNS.map((column) => {
+      const active = sortKey === column.key;
+      const th = el('th', {
+        class: column.num ? 'num' : null,
+        'aria-sort': active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none',
+      });
+      th.append(el('button', {
+        type: 'button',
+        class: `batch-sort${active ? ' active' : ''}`,
+        text: column.label,
+        'aria-label': `Sort by ${column.label}`,
+        onclick: () => {
+          if (sortKey === column.key) direction = direction === 'asc' ? 'desc' : 'asc';
+          else { sortKey = column.key; direction = column.num ? 'desc' : 'asc'; }
+          draw();
+        },
+      }));
+      return th;
+    })));
+
+    const rows = sortReports(reports, sortKey, direction);
+
+    for (const report of rows) {
+      const tr = el('tr', { class: onPick ? 'clickable' : null });
+      for (const col of BATCH_COLUMNS) {
+        const td = el('td', { class: col.num ? 'num' : null });
+        const node = CELL_NODE[col.key];
+        if (node) td.append(node(report));
+        else {
+          const value = col.text(report);
+          td.append(el('span', { class: value === UNKNOWN ? 'unknown' : null, text: value }));
+        }
+        tr.append(td);
+      }
+      if (onPick) tr.addEventListener('click', () => onPick(report));
+      tbody.append(tr);
+    }
+  }
+
+  draw();
+  wrapper.append(scroll);
+  wrapper.append(el('p', {
+    class: 'muted batch-hint',
+    text: 'Click a column to sort; click a row to jump to that file. A dash is a value that could not be established \u2014 those sort to the bottom either way. A BPM marked * is stated in the file rather than measured.',
+  }));
+  return wrapper;
 }
 
 export function observationList(observations) {

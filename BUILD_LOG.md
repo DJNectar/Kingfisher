@@ -802,3 +802,40 @@ target and no verdict, alongside the older test that holds every observation
 rule to the same standard.
 
 **270 unit tests, 65 browser assertions, all passing.**
+
+---
+
+## A launch screen, and a table for looking across a batch
+
+36. **The launch screen has no JavaScript behind it, on purpose.** It runs on a
+    fixed CSS timeline and clears itself, so a module that fails to load cannot
+    strand somebody behind a bird. It is also `pointer-events: none` for its
+    whole life: the app underneath is live and clickable from the first frame,
+    so the splash covers the wait rather than causing one. It ends at
+    `visibility: hidden`, which takes it out of hit testing and the
+    accessibility tree instead of leaving an invisible sheet over the page.
+
+37. **The batch table's sort rule is the app's own rule, applied to a
+    comparator.** A hundred files rendered as a hundred cards is a scroll, not
+    a view, and the question at intake is comparative — so: one row per file,
+    click a column to sort, click a row to jump to the card.
+
+    The part worth recording is what "unknown is null, never zero" means when
+    you are sorting rather than displaying. The obvious implementation lets
+    null fall through to a numeric comparison, which makes it zero, and a file
+    whose loudness could not be measured then wins "quietest first". That file
+    is not quiet. It has no answer, and ranking it as the quietest would be the
+    table inventing a measurement the report had just refused to make — the
+    same mistake the whole app exists to avoid, committed by a comparator
+    instead of a parser.
+
+    So an unknown sinks to the bottom in BOTH directions, and a test asserts it
+    both ways round, including for the `-Infinity` that digital silence
+    genuinely measures.
+
+    The column definitions and the comparator live in their own module with no
+    `document` in sight, for the same reason `measure.js` does: it means the
+    sorting rules are tested under `node --test` even though the table they
+    build cannot be.
+
+**289 unit tests, 90 browser assertions, all passing.**

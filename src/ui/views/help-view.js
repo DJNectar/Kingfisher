@@ -54,6 +54,7 @@ export function renderHelp(host) {
         'Embedded metadata: the Broadcast Wave (bext) description, originator, date and timecode; iXML from field recorders including scene, take and track names; and the older INFO tags like title and artist.',
         'Measured levels: peak and RMS for the file and for each channel, where the loudest moment is, and whether any channel is silent.',
         'Loudness in LUFS, loudness range in LU and true peak in dBTP \u2014 the numbers delivery specs are written in, and the one reading that can show a file going above full scale when none of its samples do.',
+        'When you check more than one file, a sortable table appears above the reports: one row per file, click a column to sort by it, click a row to jump to that file. A dash is something that could not be established, and those always sort to the bottom rather than counting as zero.',
         'A full list of every chunk in the file, including the ones Kingfisher does not decode — so you can see that nothing is being hidden from you.',
       ]),
       el('h4', { text: 'Which files it reads' }),

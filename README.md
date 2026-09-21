@@ -85,6 +85,11 @@ Some deliberate absences:
 Adding a format is a new module in `src/core/parsers/` plus a
 `registerParser()` call — no changes to the UI, rules or exporters.
 
+**A sortable batch table.** Point it at a folder and one row per file appears
+above the reports — sort by loudness, true peak, sample rate or anything else,
+then click a row to jump to that file's detail. Values that could not be
+established sort to the bottom rather than counting as zero.
+
 **Plain-language definitions.** Terms like true peak, LUFS, valid bits and
 Mixolydian carry a small "i" beside them; clicking it explains what the term
 means in ordinary words. The report keeps the vocabulary of the trade — renaming

@@ -849,3 +849,185 @@ pre.raw {
 @media (prefers-reduced-motion: reduce) {
   .info-dot { transition: none; }
 }
+
+/* ----------------------------------------------------------- launch screen */
+
+/*
+ * Shown while the local server comes up and the app boots, so the first second
+ * is the app introducing itself rather than a blank page.
+ *
+ * Three rules keep it from ever being a problem:
+ *   - pointer-events: none, always. The app behind it is live and clickable
+ *     from the first frame; this only covers the wait.
+ *   - The timeline is pure CSS. No script starts it and none is needed to end
+ *     it, so a module that fails to load cannot strand anyone behind it.
+ *   - It ends at visibility: hidden, which takes it out of hit testing and the
+ *     accessibility tree rather than leaving an invisible sheet over the page.
+ */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  pointer-events: none;
+  animation: splash-out .42s ease-in .78s both;
+}
+
+@keyframes splash-out {
+  from { opacity: 1; }
+  to { opacity: 0; visibility: hidden; }
+}
+
+.splash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* The bird, with the glow the icon's own artwork carries behind it. */
+.splash-mark {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  background: url("assets/kingfisher-256.png") center / contain no-repeat;
+  animation: splash-rise .52s cubic-bezier(.2, .8, .3, 1) both;
+}
+.splash-mark::before {
+  content: "";
+  position: absolute;
+  inset: -34%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(74, 163, 216, .26), transparent 68%);
+}
+
+.splash-word {
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  animation: splash-rise .52s cubic-bezier(.2, .8, .3, 1) .06s both;
+}
+
+/*
+ * The waveform the bird is diving at in the icon, drawn left to right. It is
+ * the one moving part, and it is what makes the screen read as an audio tool
+ * rather than a generic logo on a background.
+ */
+.splash-wave {
+  width: 240px;
+  height: 26px;
+  overflow: visible;
+}
+.splash-wave path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 700;
+  stroke-dashoffset: 700;
+  filter: drop-shadow(0 0 5px rgba(74, 163, 216, .55));
+  animation: splash-draw .66s ease-out .14s both;
+}
+
+.splash-sub {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  animation: splash-rise .52s cubic-bezier(.2, .8, .3, 1) .12s both;
+}
+
+@keyframes splash-rise {
+  from { opacity: 0; transform: translateY(7px) scale(.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes splash-draw {
+  from { stroke-dashoffset: 700; }
+  to { stroke-dashoffset: 0; }
+}
+
+/*
+ * Reduced motion: keep the screen, drop the movement. The waveform is drawn
+ * already-complete rather than animating in, and nothing slides or scales.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .splash-mark,
+  .splash-word,
+  .splash-sub { animation: splash-fade-in .2s ease-out both; }
+  .splash-wave path { animation: none; stroke-dashoffset: 0; }
+  @keyframes splash-fade-in { from { opacity: 0; } to { opacity: 1; } }
+}
+
+/* A short viewport (a laptop with a lot of browser chrome) drops the tagline
+   rather than letting the block overflow. */
+@media (max-height: 420px) {
+  .splash-sub { display: none; }
+  .splash-mark { width: 96px; height: 96px; }
+}
+
+/* -------------------------------------------------------- batch table */
+
+.batch-table { margin-bottom: 16px; }
+.batch-hint { margin: 8px 2px 0; }
+
+table.data.batch { font-size: 12.5px; }
+table.data.batch td { white-space: nowrap; }
+/* The file name is the one column allowed to be long; everything else is a
+   number or a short label, and wrapping them would make the rows ragged. */
+table.data.batch td:first-child {
+  white-space: normal;
+  min-width: 180px;
+  max-width: 320px;
+  word-break: break-word;
+}
+
+.batch-sort {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.batch-sort:hover { color: var(--text); }
+.batch-sort.active { color: var(--accent); }
+/* The arrow is generated rather than written into the label, so the button's
+   accessible name stays "Sort by LUFS" and does not read out punctuation. */
+th[aria-sort="ascending"] .batch-sort::after { content: " \2191"; }
+th[aria-sort="descending"] .batch-sort::after { content: " \2193"; }
+.batch-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+.batch-findings { display: inline-flex; gap: 4px; justify-content: flex-end; }
+.batch-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 17px;
+}
+.batch-count.attention { background: var(--attention-bg); color: var(--attention); }
+.batch-count.notice { background: var(--notice-bg); color: var(--notice); }
+.batch-clear { color: var(--text-faint); }
+
+/* The card a table row just jumped to. It fades rather than staying marked,
+   because the highlight answers "which one did I click" and nothing after. */
+.report.targeted { animation: report-found 2.2s ease-out both; }
+@keyframes report-found {
+  0%, 55% { box-shadow: 0 0 0 2px var(--accent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .report.targeted { animation: none; box-shadow: 0 0 0 2px var(--accent); }
+}

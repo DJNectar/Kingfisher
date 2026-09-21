@@ -556,6 +556,65 @@ step('Explaining a term: the "i" icons');
   expectIs('clicking away closes it', await page.locator('.info-pop').count(), 0);
 }
 
+step('Launch screen and the sortable batch table');
+{
+  // The splash must clear itself with no help from any script, and must never
+  // be able to swallow a click while it is on screen.
+  const splash = await page.evaluate(() => {
+    const el = document.querySelector('.splash');
+    if (!el) return { present: false };
+    const cs = getComputedStyle(el);
+    const hit = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    return {
+      present: true,
+      visibility: cs.visibility,
+      pointerEvents: cs.pointerEvents,
+      blocksClicks: !!hit?.closest('.splash'),
+    };
+  });
+  expectIs('a launch screen is in the page', splash.present, true);
+  expectIs('it never takes pointer events', splash.pointerEvents, 'none');
+  expectIs('it has cleared itself', splash.visibility, 'hidden');
+  expectIs('and is not swallowing clicks', splash.blocksClicks, false);
+
+  // Load several files so the batch view appears.
+  await page.click('.tab[data-view="inspect"]');
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles(files.slice(0, 5));
+  await dontLog(page);
+  await page.waitForTimeout(9000);
+
+  const rows = page.locator('.batch-table tbody tr');
+  expectIs('one table row per file', await rows.count(), 5);
+  const head = await page.locator('.batch-table thead').innerText();
+  expect('the columns a delivery is scanned by are there', /LUFS/, head);
+  expect('including true peak', /dBTP/, head);
+
+  // Sorting by name, both ways, must be exact opposites of each other.
+  const nameCol = page.locator('.batch-sort', { hasText: 'File' }).first();
+  await nameCol.click();
+  await page.waitForTimeout(200);
+  const asc = (await rows.allInnerTexts()).map((t) => t.split('\t')[0]);
+  await nameCol.click();
+  await page.waitForTimeout(200);
+  const desc = (await rows.allInnerTexts()).map((t) => t.split('\t')[0]);
+  expectIs('clicking a column sorts it', JSON.stringify(asc) !== JSON.stringify(desc), true);
+  expectIs('and clicking again reverses it', JSON.stringify([...asc].reverse()), JSON.stringify(desc));
+  expect('the sorted column is marked for screen readers', /ascending|descending/,
+    await page.locator('.batch-table th[aria-sort]').first().getAttribute('aria-sort') ?? '');
+
+  // A row takes you to that file's card.
+  await rows.nth(2).click();
+  await page.waitForTimeout(500);
+  expectIs('clicking a row marks one card', await page.locator('.report.targeted').count(), 1);
+  const picked = (await rows.nth(2).innerText()).split('\t')[0].trim();
+  const marked = (await page.locator('.report.targeted .report-title').innerText()).trim();
+  expectIs('and it is the right one', marked, picked);
+
+  await page.screenshot({ path: join(HERE, 'shot-batch.png'), fullPage: false });
+}
+
 console.log('\n=== RESULT ===');
 console.log('page errors:', errors.length ? errors.join('\n') : 'none');
 console.log('failed assertions:', failures.length ? failures.join(', ') : 'none');
