@@ -34,6 +34,7 @@ import {
   createReport,
   addError,
   addWarning,
+  addTruncation,
   finalizeStatus,
 } from '../report.js';
 
@@ -506,7 +507,7 @@ async function applyDuration(report, source, first, vbr, audioEnd) {
       // that is present. It is no longer the whole of what the file set out to
       // hold, which is what `exact` claims.
       d.exact = false;
-      addWarning(report, 'The last frame in this file starts but does not finish: its header is present and the audio it describes is not. The duration covers the frames that are complete.');
+      addTruncation(report, 'The last frame in this file starts but does not finish: its header is present and the audio it describes is not. The duration covers the frames that are complete.');
     }
     return;
   }

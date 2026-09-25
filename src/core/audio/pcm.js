@@ -125,6 +125,28 @@ export async function scanAudio(source, report, {
     loudnessCollector.abandon('This file is too large to read end to end, so it was sampled at intervals. Loudness needs continuous audio, and the joins between samples would read as peaks that are not in the file.');
   }
 
+  // A sample that is not a finite number is not a quiet sample. It cannot be
+  // filtered, correlated or reconstructed, and it does not stay where it is
+  // put: one NaN through a biquad leaves the filter state NaN for the rest of
+  // the file, so a single bad sample in a clean recording turned every
+  // subsequent block into "below the gate" and the whole file into a report of
+  // near-silence.
+  //
+  // The levels can carry on, because a peak and a mean are per-sample and the
+  // bad ones are set aside. The DSP cannot: skipping a sample shortens time,
+  // substituting a zero invents a transient, and either one is a measurement of
+  // something that is not in the file. So these are abandoned with the reason,
+  // the same way an over-large file abandons them - a missing figure with an
+  // explanation, rather than a figure that is wrong.
+  let invalidSamples = false;
+  const abandonForInvalidInput = () => {
+    if (invalidSamples) return;
+    invalidSamples = true;
+    onsets?.abandon('Some samples in this file are not finite numbers, so the audio cannot be analysed for tempo. Skipping them would shorten the timeline and substituting zeros would invent transients.');
+    chroma?.abandon('Some samples in this file are not finite numbers, so the audio cannot be analysed for key.');
+    loudness?.abandon('Some samples in this file are not finite numbers. Loudness filters each sample into the next, so one of these makes every figure after it meaningless; no loudness is reported rather than a wrong one.');
+  };
+
   const ch = Array.from({ length: f.channels }, () => newChannelAccumulator());
   // One reusable frame buffer, handed to the loudness collector per frame.
   // Allocating a fresh array per frame would make the scan's memory behaviour
@@ -151,17 +173,22 @@ export async function scanAudio(source, report, {
       for (let o = 0; o < usable; o += frameBytes) {
         const frameIndex = baseFrame + o / frameBytes;
         let sum = 0;
+        let frameFinite = true;
         for (let c = 0; c < f.channels; c++) {
           const value = readSample(view, o + c * bytesPerSample);
           accumulate(ch[c], value, frameIndex, threshold);
+          if (!Number.isFinite(value)) frameFinite = false;
           if (frameValues) frameValues[c] = value;
           sum += value;
         }
-        if (loudness) loudness.push(frameValues, f.channels);
-        if (onsets || chroma) {
-          const mono = sum / f.channels;
-          if (onsets) onsets.push(mono);
-          if (chroma) chroma.push(mono);
+        if (!frameFinite) abandonForInvalidInput();
+        if (!invalidSamples) {
+          if (loudness) loudness.push(frameValues, f.channels);
+          if (onsets || chroma) {
+            const mono = sum / f.channels;
+            if (onsets) onsets.push(mono);
+            if (chroma) chroma.push(mono);
+          }
         }
         framesScanned++;
       }

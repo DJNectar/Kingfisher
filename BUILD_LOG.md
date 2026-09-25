@@ -982,11 +982,17 @@ turned out to be real when I chased them.
     positions 96.5 and 98.5, both inside the original span. The peak was always
     there.
 
-    2.5 dB, in the direction that hides an over rather than inventing one, on
-    any file ending in a transient - which is most of them, because that is
-    what a fade-out is not. `finish()` now carries taps zeros through the delay
-    line, touching the true-peak state only, so duration, gating and the
-    integrated figure are bit for bit unchanged.
+    The error is one-sided - it can only under-read, never over-read, which is
+    the direction that hides an over rather than inventing one. Its size is
+    not general. The reported maximum changes only when the un-evaluated tail
+    holds a peak larger than the largest already found everywhere else in the
+    file, so a file whose loudest moment is anywhere but the last few samples
+    is unaffected. The 2.5 dB here is one constructed case, not a typical
+    figure and not a proven bound.
+
+    `finish()` now carries taps zeros through the delay line, touching the
+    true-peak state only, so duration, gating and the integrated figure are
+    bit for bit unchanged.
 
 46. **`Math.max(...blocks)` has a length limit, and it is reachable.** One
     argument per block, and the engine gives out at a few hundred thousand -
@@ -1062,3 +1068,101 @@ turned out to be real when I chased them.
     correctness and the review did not claim it was.
 
 **314 unit tests, 90 browser assertions, all passing.**
+
+---
+
+## Session 7 — 2026-09-25 — the second pass of the same review
+
+The reviewer re-read the repaired code and found three more P2 issues, all of
+them consequences of session 6's fixes being right about the value and wrong
+about its reach. Every one reproduced. It also corrected a claim I had made
+about the severity of the true-peak bug, and the correction was right.
+
+### The pattern, again, one level up
+
+51. **Making a field nullable is a change to every reader of that field, and
+    session 6 only found some of them.** Entry 48 caught one reader -
+    `(dcOffset * 100).toFixed(4)`. There were four more, and they failed in
+    four different ways, which is why grepping for the field name was not
+    enough:
+
+    - `pcm.js` never read the field at all. It read the *sample*, and went on
+      handing raw NaN to the loudness, tempo and key collectors.
+    - `peak-at-ceiling` read `peakDbfs` through a comparison. `null < -0.1` is
+      false, because null coerces to 0, so the rule passed its own guard and
+      then called a dB formatter on null - a `rule-error` in the report.
+    - `yesNo` read `digitalSilence` through a truthiness test, collapsing three
+      states into two: unknown exported as "no".
+    - `finalizeStatus` read none of them, and said "ok".
+
+    A nullable field does not announce itself at its readers. It announces
+    itself as a crash, a coerced zero, a collapsed boolean, or silence -
+    whichever the reader's idiom happens to produce.
+
+### The one that mattered most
+
+52. **A single NaN made an entire clean recording report as near-silence.**
+    The level accumulators were guarded in session 6, so `audio.peak` was
+    correctly null. But `pcm.js` was still pushing the original samples into
+    the loudness collector, and loudness is not a per-sample summary - it is a
+    biquad cascade, where each sample feeds the next. One NaN leaves the filter
+    state NaN permanently.
+
+    One second of 1 kHz at 0.5, with sample 100 replaced: peak correctly
+    -6.02 dBFS, and an integrated loudness of null with the reason "every block
+    in this file fell below the -70 LUFS gate". That is not a missing figure,
+    it is a confident and wrong description of the audio - the exact failure
+    mode this app exists to avoid, produced by a fix intended to prevent it.
+
+    A file of 48,000 NaNs was worse: `measured: true`, true peak -Infinity,
+    momentary max -Infinity, and a reason describing silence.
+
+    The three collectors already had `abandon(reason)`, used when a file is too
+    large to read continuously. The same mechanism applies: the levels carry on
+    because they are per-sample and the bad ones are set aside, and the DSP
+    withholds with the real reason. Skipping a sample would shorten time and
+    substituting a zero would invent a transient, so neither is done. The
+    decoded path takes the same route off `stats.nonFiniteSamples`, which
+    `measureFloatChannels` already counts.
+
+### Truncation, and what a status is for
+
+53. **A report that explained the file was cut short then called itself fully
+    read.** The MP3 and Ogg fixes from session 6 added the warning and cleared
+    `duration.exact`, and stopped there. `finalizeStatus` looks at errors, core
+    fields and duration - none of which a truncated file is missing - so the
+    status stayed `ok` and the CSV said "fully read".
+
+    The fix is a flag, `parse.truncated`, set only where a parser has
+    established that audio the file accounts for is absent. Not a search
+    through the warning text: most warnings are informational, and downgrading
+    on all of them would make "read in full" mean nothing. There is a test for
+    that specifically - a non-standard sample rate still reads as ok.
+
+    The container formats already recorded the same fact as
+    `audioData.shortfall`, so that is folded in at the same point. A WAV whose
+    data chunk declares four times what it holds now reports partial too; it
+    reported ok before, and fixing two formats while leaving a third would only
+    have moved the inconsistency.
+
+### A correction to session 6
+
+54. **I overstated the true-peak bug.** Entry 45 said the 2.5 dB error applied
+    to "any file ending in a transient", and I told the client every true-peak
+    figure the app had ever produced was affected. Neither is supported.
+
+    The error is real and one-sided: the interpolator could only under-read,
+    never over-read. But the reported maximum changes only when the
+    un-evaluated tail holds a peak larger than the largest already found
+    everywhere else in the file. A track whose loudest moment is in the middle
+    - which is most tracks - reports the same figure before and after. The
+    2.5 dB is one constructed case, chosen to isolate the mechanism, and is
+    neither typical nor a proven worst case.
+
+    Worth recording as its own entry rather than a quiet edit, because the
+    failure is a specific one: having found a real bug and built a correct
+    reproduction, I described its blast radius from the vividness of the test
+    case instead of from the mechanism. A reproduction proves a bug exists. It
+    says nothing on its own about how often it bites.
+
+**322 unit tests, 90 browser assertions, all passing.**

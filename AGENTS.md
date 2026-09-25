@@ -14,7 +14,7 @@ No build step. No framework. No runtime dependencies. `playwright-core` is a
 devDependency for the browser test and nothing else ships.
 
 ```
-npm test                 # 314 unit tests, node --test, no browser needed
+npm test                 # 322 unit tests, node --test, no browser needed
 python3 -m http.server 8181 &
 node test/browser/e2e.mjs   # 90 assertions against the real UI
 ```

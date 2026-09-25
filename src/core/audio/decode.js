@@ -27,8 +27,8 @@
  */
 
 import { measureFloatChannels } from './measure.js';
-import { estimateTempo } from './tempo.js';
-import { estimateKey } from './key.js';
+import { estimateTempo, notEstablished as tempoNotEstablished } from './tempo.js';
+import { estimateKey, notEstablished as keyNotEstablished } from './key.js';
 import { measureLoudness } from './loudness.js';
 
 /** Bytes of decoded audio we are willing to hold. 400 MB ≈ 40 stereo minutes. */
@@ -210,6 +210,30 @@ export async function decodeAndMeasure(file, report) {
   stats.decodedChannels = audio.numberOfChannels;
   stats.decodedSeconds = audio.duration;
   stats.containerSeconds = report.duration.seconds ?? null;
+
+  // A decoder should not hand back NaN, but "should not" is not "cannot", and
+  // the consequence is the same here as on the byte path: one non-finite sample
+  // leaves every filter it touches permanently NaN, so the figures that follow
+  // are not merely wrong, they are confidently wrong. measureFloatChannels has
+  // already counted them, so this costs nothing.
+  if (stats.nonFiniteSamples > 0) {
+    const what = `${stats.nonFiniteSamples.toLocaleString('en-US')} sample${
+      stats.nonFiniteSamples === 1 ? '' : 's'
+    } in the decoded audio ${stats.nonFiniteSamples === 1 ? 'is' : 'are'} not a finite number`;
+    return {
+      stats,
+      tempo: tempoNotEstablished(`${what}, so the timing cannot be analysed. Skipping them would shorten the timeline and substituting zeros would invent transients.`),
+      key: keyNotEstablished(`${what}, so the pitch content cannot be analysed.`),
+      loudness: {
+        measured: false,
+        reason: `${what}. Loudness filters each sample into the next, so one of these makes every figure after it meaningless; no loudness is reported rather than a wrong one.`,
+        integrated: null,
+        range: null,
+        truePeak: null,
+        limits: [],
+      },
+    };
+  }
 
   return {
     stats,

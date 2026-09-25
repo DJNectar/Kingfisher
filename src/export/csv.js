@@ -31,6 +31,7 @@ const COLUMNS = [
   ['Full-scale samples', (r) => (r.audio?.measured ? r.audio.fullScaleSamples : null)],
   ['Longest full-scale run', (r) => (r.audio?.measured ? r.audio.longestFullScaleRun : null)],
   ['All silent', (r) => (r.audio?.measured ? yesNo(r.audio.digitalSilence) : null)],
+  ['Samples not readable', (r) => (r.audio?.measured ? r.audio.nonFiniteSamples : null)],
   ['Levels measured from', (r) => (r.audio?.measured ? `${(r.audio.coverage * 100).toFixed(1)}%` : null)],
   ['BWF description', (r) => r.metadata.bext?.description],
   ['BWF originator', (r) => r.metadata.bext?.originator],
@@ -214,6 +215,11 @@ function clock(seconds) {
 }
 
 function yesNo(v) {
+  // Three states, not two. A column that could not be established is blank, the
+  // same as every other unknown in this file - collapsing null to "no" turns a
+  // question nobody could answer into a confident negative, and a spreadsheet
+  // has no way to tell the difference afterwards.
+  if (v === null || v === undefined) return null;
   return v ? 'yes' : 'no';
 }
 

@@ -14,7 +14,16 @@ import assert from 'node:assert/strict';
 
 import { BufferByteSource } from '../src/core/bytes.js';
 import { inspectSource } from '../src/core/registry.js';
+import { reportsToCsv } from '../src/export/csv.js';
 import * as F from './helpers/wav-fixtures.js';
+
+/** One CSV column for one report, by its header name. */
+function csvCell(report, column) {
+  const [head, row] = reportsToCsv([report]).split('\n');
+  const at = head.split(',').findIndex((h) => h.replace(/"/g, '') === column);
+  assert.ok(at >= 0, `no CSV column named ${column}`);
+  return row.split(',')[at].replace(/"/g, '');
+}
 
 const read = (name, bytes) =>
   inspectSource(new BufferByteSource(bytes), { name, size: bytes.length }, { detectTempo: false });
@@ -34,6 +43,13 @@ test('an MPEG frame header with no frame behind it is not counted', async () => 
     report.parse.warnings.some((w) => /starts but does not finish/i.test(w.message)),
     'nothing said the file was cut short',
   );
+
+  // A warning is for a reader; the status is what the rest of the app acts on.
+  // The two disagreed: the report explained the file was cut short and then
+  // called itself fully read, in the report header and in the CSV.
+  assert.equal(report.parse.truncated, true);
+  assert.equal(report.parse.status, 'partial');
+  assert.equal(csvCell(report, 'Read result'), 'partly read');
 });
 
 test('an Ogg page whose payload is missing does not certify a duration', async () => {
@@ -55,6 +71,9 @@ test('an Ogg page whose payload is missing does not certify a duration', async (
     report.parse.warnings.some((w) => /cut short/i.test(w.message)),
     'nothing said the last page was incomplete',
   );
+  assert.equal(report.parse.truncated, true);
+  assert.equal(report.parse.status, 'partial');
+  assert.equal(csvCell(report, 'Read result'), 'partly read');
 });
 
 test('an Ogg stream with no sample rate reports no duration at all', async () => {
@@ -142,4 +161,76 @@ test('a multi-track MP4 describes one track, not a blend of several', async () =
     report.parse.warnings.some((w) => /first audio track/i.test(w.message)),
     'nothing said which track was being described',
   );
+});
+
+test('a data chunk shorter than it declares is also an incomplete read', async () => {
+  // The same class as the two above, in the container formats, where it is
+  // recorded as a byte shortfall rather than a flag. Fixing MP3 and Ogg while
+  // leaving this one saying "fully read" would just move the inconsistency.
+  const payload = F.pcmData({ frames: 100, channels: 1, bitsPerSample: 16 });
+  const bytes = F.riff([
+    F.fmtChunk({ channels: 1, sampleRate: 44100, bitsPerSample: 16 }),
+    F.dataChunkWithDeclaredSize(payload, payload.length * 4),
+  ]);
+  const report = await read('short-data.wav', bytes);
+
+  assert.ok(report.audioData.shortfall > 0);
+  assert.equal(report.parse.status, 'partial');
+  assert.equal(csvCell(report, 'Read result'), 'partly read');
+});
+
+test('an intact file is still read in full', async () => {
+  // The guard must not downgrade every file that carries a warning. This one
+  // parses cleanly and must stay "ok".
+  const bytes = F.riff([
+    F.fmtChunk({ channels: 1, sampleRate: 44100, bitsPerSample: 16 }),
+    F.chunk('data', F.pcmData({ frames: 4410, channels: 1, bitsPerSample: 16 })),
+  ]);
+  const report = await read('intact.wav', bytes);
+
+  assert.equal(report.parse.truncated, false);
+  assert.equal(report.parse.status, 'ok');
+  assert.equal(csvCell(report, 'Read result'), 'fully read');
+});
+
+test('an informational warning does not downgrade the read', async () => {
+  // A non-standard sample rate is worth saying and is not a truncation. If
+  // every warning downgraded the status, "read in full" would mean nothing.
+  const bytes = F.riff([
+    F.fmtChunk({ channels: 1, sampleRate: 44101, bitsPerSample: 16 }),
+    F.chunk('data', F.pcmData({ frames: 4410, channels: 1, bitsPerSample: 16 })),
+  ]);
+  const report = await read('odd-rate.wav', bytes);
+
+  assert.equal(report.parse.status, 'ok', 'an informational finding downgraded the read');
+  assert.equal(csvCell(report, 'Read result'), 'fully read');
+});
+
+test('unknown silence exports as blank, not as "no"', async () => {
+  // yesNo collapsed three states into two: a file whose silence could not be
+  // established exported as "no", which in a spreadsheet is indistinguishable
+  // from a file that was measured and found not silent.
+  const nan = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 1, sampleRate: 48000, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(Float32Array.from(new Array(4800).fill(NaN)).buffer)),
+  ]);
+  const unknown = await read('all-nan.wav', nan);
+  assert.equal(unknown.audio.digitalSilence, null);
+  assert.equal(csvCell(unknown, 'All silent'), '', 'unknown silence exported as a definite answer');
+
+  // And the two real answers still export as themselves.
+  const silent = F.riff([
+    F.fmtChunk({ channels: 1, sampleRate: 44100, bitsPerSample: 16 }),
+    F.chunk('data', F.pcmData({ frames: 4410, channels: 1, bitsPerSample: 16 })),
+  ]);
+  assert.equal(csvCell(await read('silent.wav', silent), 'All silent'), 'yes');
+
+  const loud = F.riff([
+    F.fmtChunk({ channels: 1, sampleRate: 44100, bitsPerSample: 16 }),
+    F.chunk('data', F.pcmData({
+      frames: 4410, channels: 1, bitsPerSample: 16,
+      gen: (f) => 0.5 * Math.sin((2 * Math.PI * 440 * f) / 44100),
+    })),
+  ]);
+  assert.equal(csvCell(await read('loud.wav', loud), 'All silent'), 'no');
 });

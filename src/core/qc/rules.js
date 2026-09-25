@@ -37,6 +37,25 @@ const fmtSignedDb = (v) => (v === -Infinity ? '-∞' : `${v > 0 ? '+' : ''}${v.t
 const truncate = (s, n) => (String(s).length <= n ? String(s) : `${String(s).slice(0, n - 1)}…`);
 const fmtHz = (v) => `${v.toLocaleString('en-US')} Hz`;
 
+/**
+ * Are the levels a measurement, or only the shape of one?
+ *
+ * `measured: true` says the scan ran. It does not say the scan established
+ * anything: a file whose samples are not finite numbers is scanned end to end
+ * and yields null for every figure. Those nulls then flow into comparisons,
+ * where `null < -0.1` is false because null coerces to 0 - so a rule sails past
+ * its own guard and calls a formatter on null.
+ *
+ * Every rule that reads a level goes through here, so the guard cannot be
+ * forgotten in one of them. A genuine -Infinity from real silence is a number
+ * and passes; a null does not.
+ */
+function levelsEstablished(a) {
+  return Boolean(a?.measured)
+    && typeof a.peakDbfs === 'number'
+    && typeof a.digitalSilence === 'boolean';
+}
+
 export const RULES = [
   // ---------------------------------------------------------------- parsing
   {
@@ -287,7 +306,7 @@ export const RULES = [
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || !a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence !== true) return null;
       return {
         id: 'digital-silence',
         title: 'This file is entirely silent',
@@ -304,7 +323,7 @@ export const RULES = [
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       const silent = a.channels.filter((c) => c.digitalSilence);
       if (!silent.length) return null;
       return {
@@ -325,7 +344,7 @@ export const RULES = [
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       if (a.longestFullScaleRun < THRESHOLDS.clipRunSamples) return null;
       // A decoded signal that overshoots full scale is described by its own
       // rule, which says it accurately. Saying "flat-topped" here as well
@@ -393,7 +412,7 @@ export const RULES = [
     severity: SEVERITY.NOTICE,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       if (a.longestFullScaleRun >= THRESHOLDS.clipRunSamples) return null; // covered above
       if (a.peakDbfs < THRESHOLDS.nearFullScaleDbfs) return null;
       return {
@@ -410,7 +429,7 @@ export const RULES = [
     severity: SEVERITY.NOTICE,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || r.format.codecFamily !== 'pcm-float') return null;
+      if (!levelsEstablished(a) || r.format.codecFamily !== 'pcm-float') return null;
       if (a.peak <= 1) return null;
       return {
         id: 'float-above-full-scale',
@@ -424,7 +443,7 @@ export const RULES = [
     severity: SEVERITY.INFO,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       if (a.peakDbfs >= THRESHOLDS.lowLevelDbfs) return null;
       return {
         id: 'level-very-low',
@@ -440,7 +459,7 @@ export const RULES = [
     severity: SEVERITY.NOTICE,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       const offenders = a.channels.filter((c) => Math.abs(c.dcOffset) > THRESHOLDS.dcOffset);
       if (!offenders.length) return null;
       return {
@@ -463,7 +482,7 @@ export const RULES = [
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.source !== 'decoded') return null;
+      if (!levelsEstablished(a) || a.source !== 'decoded') return null;
       if (r.format.lossless !== false) return null; // lossless decodes exactly
       if (a.peak <= 1) return null;
       return {

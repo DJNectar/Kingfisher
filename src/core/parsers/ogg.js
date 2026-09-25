@@ -24,6 +24,7 @@ import {
   createReport,
   addError,
   addWarning,
+  addTruncation,
   finalizeStatus,
 } from '../report.js';
 
@@ -347,7 +348,7 @@ function applyDuration(report, codec, lastPage, fileSize) {
   d.exact = lastPage.complete;
 
   if (!lastPage.complete) {
-    addWarning(report, 'The last page of this stream is cut short: its header says how much audio the stream ends with, but that audio is not all in the file. The duration shown is what the header claims, not what is present.');
+    addTruncation(report, 'The last page of this stream is cut short: its header says how much audio the stream ends with, but that audio is not all in the file. The duration shown is what the header claims, not what is present.');
   }
 
   if (d.seconds > 0) f.bitrate = Math.round((fileSize * 8) / d.seconds);
