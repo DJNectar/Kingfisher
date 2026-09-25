@@ -356,3 +356,32 @@ test('the report never states a loudness target or a verdict', () => {
     assert.doesNotMatch(text, banned, `loudness result used judging language: ${banned}`);
   }
 });
+
+test('the true-peak interpolator is drained at end of stream', () => {
+  // The reconstruction at any moment is built from the samples behind it, so
+  // the last few samples of a file are only fully seen once the filter has been
+  // carried past them. Stopping at the final sample drops that span, and drops
+  // it downwards - a peak that is there goes unreported, which is the direction
+  // that hides an over rather than inventing one.
+  //
+  // A transient in the last four samples. Zero-padding the same signal gives
+  // the interpolator room it should not need: the two must now agree.
+  const tail = new Float64Array(100);
+  tail.set([0.7, 0.7, -0.7, -0.7], 96);
+  const padded = new Float64Array(112);
+  padded.set(tail);
+
+  const atEnd = measureLoudness([tail], { sampleRate: SR }).truePeak;
+  const withRoom = measureLoudness([padded], { sampleRate: SR }).truePeak;
+
+  assert.ok(
+    Math.abs(atEnd - withRoom) < 1e-9,
+    `a transient at the end read ${atEnd} dBTP but ${withRoom} dBTP with padding`,
+  );
+
+  // And it is genuinely above the sample peak: ideal sinc reconstruction of
+  // this signal reaches 0.9507 at sample positions 96.5 and 98.5, both inside
+  // the original span, against a sample peak of 0.7 (-3.098 dBFS).
+  assert.ok(atEnd > -3.0, `true peak ${atEnd} dBTP did not exceed the -3.098 dBFS sample peak`);
+  assert.ok(atEnd < 20 * Math.log10(0.9506855) + 0.2, `true peak ${atEnd} dBTP overshot the ideal reconstruction`);
+});
