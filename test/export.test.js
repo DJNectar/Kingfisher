@@ -473,3 +473,27 @@ function reportWithTempo() {
   };
   return report;
 }
+
+test('a DC offset that could not be established renders as unknown, not as centred', async () => {
+  // `null * 100` is 0 and `(0).toFixed(4)` is "0.0000", so an unmeasurable
+  // channel rendered as a perfectly centred one - the null rule broken by
+  // arithmetic rather than by intent, and indistinguishable from a reading.
+  const { formatDcOffset, UNKNOWN } = await import('../src/core/format.js');
+
+  assert.equal(formatDcOffset(null), UNKNOWN);
+  assert.equal(formatDcOffset(undefined), UNKNOWN);
+  assert.equal(formatDcOffset(NaN), UNKNOWN);
+  assert.equal(formatDcOffset(0), '0.0000%', 'a measured zero is a real reading and must still print');
+  assert.equal(formatDcOffset(0.0123), '1.2300%');
+
+  // And end to end, through the text report.
+  const bytes = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 1, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(new Float32Array([NaN, NaN, NaN]).buffer)),
+  ]);
+  const report = await inspectSource(
+    new BufferByteSource(bytes), { name: 'nan.wav', size: bytes.length }, { detectTempo: false },
+  );
+  const text = renderFileReport(report);
+  assert.doesNotMatch(text, /0\.0000%/, 'an unmeasurable DC offset printed as 0.0000%');
+});

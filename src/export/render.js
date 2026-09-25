@@ -16,6 +16,7 @@ import {
   formatBitDepth,
   formatChannels,
   formatDbfs,
+  formatDcOffset,
   formatSignedDb,
   formatTimestamp,
   UNKNOWN,
@@ -216,7 +217,7 @@ function renderLevels(report) {
     lines.push(
       `  ${c.name.padEnd(10)}${formatDbfs(c.peakDbfs).padStart(12)}${formatDbfs(c.rmsDbfs).padStart(12)}${
         (c.peakSeconds === null ? UNKNOWN : formatDuration(c.peakSeconds)).padStart(12)
-      }   ${(c.dcOffset * 100).toFixed(4)}%${c.digitalSilence ? '   (silent)' : ''}`,
+      }   ${formatDcOffset(c.dcOffset)}${c.digitalSilence ? '   (silent)' : ''}`,
     );
   }
   return lines;

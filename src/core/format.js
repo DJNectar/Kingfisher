@@ -94,6 +94,19 @@ export function formatSignedDb(db, digits = 1) {
   return db > 0 ? `+${v}` : v;
 }
 
+/**
+ * DC offset as a percentage of full scale.
+ *
+ * Null has to be handled here rather than at the call sites, because `null *
+ * 100` is 0 and `(0).toFixed(4)` is "0.0000" - so a channel whose offset could
+ * not be established renders as a perfectly centred one. That is the null rule
+ * broken by arithmetic rather than by intent, and it reads as a measurement.
+ */
+export function formatDcOffset(fraction, digits = 4) {
+  if (fraction === null || fraction === undefined || Number.isNaN(fraction)) return UNKNOWN;
+  return `${(fraction * 100).toFixed(digits)}%`;
+}
+
 export function formatTimestamp(iso) {
   if (!iso) return UNKNOWN;
   const d = new Date(iso);
