@@ -405,3 +405,37 @@ test('the loudest block is found without an argument limit', () => {
   // silence, it is nothing measured.
   assert.equal(maxBlockLoudness([]), null);
 });
+
+test('a loud channel does not suppress a quieter one\'s true peak', () => {
+  // The skip bound is sound: no phase can amplify its input beyond the sum of
+  // the tap magnitudes, so a window quiet enough cannot beat the running peak.
+  // The bug was sharing one counter across channels. A loud moment in the left
+  // channel armed and then disarmed the skip for the right, whose own peak
+  // arrived later and quieter - so the right channel's reconstruction was never
+  // evaluated and its figure collapsed to its sample peak.
+  //
+  // The file-wide maximum survived that, because the channel that set the bound
+  // was the one that needed evaluating. The per-channel figures did not, and
+  // the report shows those too.
+  const left = new Float64Array(300);
+  const right = new Float64Array(300);
+  left[30] = 1;
+  for (let i = 150; i < 250; i++) {
+    right[i] = 0.1 * Math.sin((Math.PI / 2) * (i - 150) + Math.PI / 4);
+  }
+
+  const stereo = measureLoudness([left, right], { sampleRate: SR });
+  const solo = measureLoudness([right], { sampleRate: SR });
+
+  assert.ok(
+    Math.abs(stereo.channels[1].truePeakDbtp - solo.truePeak) < 1e-9,
+    `the right channel read ${stereo.channels[1].truePeakDbtp} dBTP in stereo `
+    + `but ${solo.truePeak} dBTP on its own`,
+  );
+
+  // Specifically, it is no longer just the sample peak read back.
+  assert.ok(
+    stereo.channels[1].truePeakDbtp > stereo.channels[1].samplePeakDbfs + 0.5,
+    'the right channel true peak collapsed onto its sample peak',
+  );
+});

@@ -390,7 +390,14 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
   let delayHead = 0;
   const truePeaks = new Float64Array(channels);
   const samplePeaks = new Float64Array(channels);
-  let hot = 0;
+  // One skip counter per channel, not one for the file. The bound itself is
+  // per channel - no phase can amplify its own channel's input beyond the sum
+  // of the tap magnitudes - and sharing one counter across channels made a loud
+  // moment in one channel suppress interpolation in the others. The file-wide
+  // maximum survived that, because the channel that set the bound was the one
+  // that needed evaluating; the per-channel figures did not, and those are
+  // reported too.
+  const hotByChannel = new Int32Array(channels);
 
   let frames = 0;
   let abandoned = null;
@@ -403,23 +410,25 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
    * a call on the hot path, but only on the samples that passed the skip bound,
    * and those already do taps * factor * channels of work.
    */
-  function interpolateFrom(n) {
-    for (let c = 0; c < n; c++) {
-      const top = c * ringSpan + delayHead + taps;
-      interpolated.fill(0);
-      for (let j = 0; j < taps; j++) {
-        const v = delay[top - j];
-        if (v === 0) continue;
-        const off = j * factor;
-        for (let p = 0; p < factor; p++) interpolated[p] += tapsByTime[off + p] * v;
-      }
-      let best = truePeaks[c];
-      for (let p = 0; p < factor; p++) {
-        const a = interpolated[p] < 0 ? -interpolated[p] : interpolated[p];
-        if (a > best) best = a;
-      }
-      truePeaks[c] = best;
+  function interpolateChannel(c) {
+    const top = c * ringSpan + delayHead + taps;
+    interpolated.fill(0);
+    for (let j = 0; j < taps; j++) {
+      const v = delay[top - j];
+      if (v === 0) continue;
+      const off = j * factor;
+      for (let p = 0; p < factor; p++) interpolated[p] += tapsByTime[off + p] * v;
     }
+    let best = truePeaks[c];
+    for (let p = 0; p < factor; p++) {
+      const a = interpolated[p] < 0 ? -interpolated[p] : interpolated[p];
+      if (a > best) best = a;
+    }
+    truePeaks[c] = best;
+  }
+
+  function interpolateFrom(n) {
+    for (let c = 0; c < n; c++) interpolateChannel(c);
   }
 
   /**
@@ -487,13 +496,11 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
       if (abandoned) return;
       const n = count < channels ? count : channels;
 
-      // Does any sample in the interpolator's reach exceed what it would take
-      // to beat the peak so far? If not, the reconstruction between these
-      // samples is bounded below the running peak and can be skipped. The bound
-      // is hard, so this loses nothing; it just avoids the arithmetic over the
-      // large majority of a track that is nowhere near its loudest moment.
-      let loudestNow = 0;
-
+      // Does this sample reach far enough to beat its own channel's peak? If
+      // not, the reconstruction around it is bounded below that peak and can be
+      // skipped. The bound is hard, so this loses nothing; it just avoids the
+      // arithmetic over the large majority of a track that is nowhere near its
+      // loudest moment.
       for (let c = 0; c < n; c++) {
         const x = values[c];
 
@@ -517,8 +524,8 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
 
         const abs = x < 0 ? -x : x;
         if (abs > samplePeaks[c]) samplePeaks[c] = abs;
-        if (abs > loudestNow) loudestNow = abs;
         if (doTruePeak) {
+          if (abs * gainBound > truePeaks[c]) hotByChannel[c] = taps;
           const at = c * ringSpan + delayHead;
           delay[at] = x;
           delay[at + taps] = x;
@@ -526,13 +533,11 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
       }
 
       if (doTruePeak) {
-        let running = 0;
-        for (let c = 0; c < n; c++) if (truePeaks[c] > running) running = truePeaks[c];
-        if (loudestNow * gainBound > running) hot = taps;
-
-        if (hot > 0) {
-          hot--;
-          interpolateFrom(n);
+        for (let c = 0; c < n; c++) {
+          if (hotByChannel[c] > 0) {
+            hotByChannel[c]--;
+            interpolateChannel(c);
+          }
         }
         delayHead = delayHead + 1 === taps ? 0 : delayHead + 1;
       }
