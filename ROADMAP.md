@@ -15,7 +15,7 @@ per-client work history, and exports in four formats.
 |---|---|
 | `main` | current; everything below has landed |
 | Pull requests | [#1](https://github.com/DJNectar/Kingfisher/pull/1) and [#2](https://github.com/DJNectar/Kingfisher/pull/2), both merged |
-| Unit tests | 299, all passing (GitHub Actions runs them on every push) |
+| Unit tests | 314, all passing (GitHub Actions runs them on every push) |
 | Browser tests | 90 assertions, all passing |
 | Packaging | a macOS `.app` builds from `packaging/`, and passes the browser suite |
 
@@ -156,7 +156,7 @@ then open <http://localhost:8181> in Chrome. Or double-click `start.command`.
 Tests:
 
 ```bash
-npm test              # 299 unit tests, no dependencies needed
+npm test              # 314 unit tests, no dependencies needed
 npm run test:browser  # full UI walkthrough (needs: npm install)
 npm run test:fsa      # Chrome save-in-place path, with a stand-in file handle
 ```

@@ -918,3 +918,147 @@ right, and the reason turned out to be structural rather than a tuning slip.
     else in the report.
 
 **299 unit tests, 90 browser assertions, all passing.**
+
+---
+
+## Session 6 — 2026-09-25 — acting on an outside review
+
+An independent review was run against `main` at `930de55`. Ten findings, three
+P1 and seven P2, each with a reproduction recipe. Every one reproduced, most of
+them to the digit, so this session is almost entirely repair.
+
+The review is worth reading for its restraint as much as its findings. It
+disputed none of the deliberate decisions, declined to argue about the mode
+prior on the grounds that nothing in the repository settles it either way, and
+marked clearly which claims it had verified and which it had only inferred. Two
+of the paths it flagged as "similar-looking but not separately reproduced"
+turned out to be real when I chased them.
+
+### The shape the findings had in common
+
+43. **Seven of the ten are the same mistake wearing different clothes: a
+    statement the file makes, reported as a fact about the file.** A COMM
+    chunk's declared size, an MPEG frame header with no frame behind it, an
+    Ogg page header whose payload was truncated away, a `fact` chunk declaring
+    zero samples, a granule count with no rate to divide by, a sample entry
+    from one track beside a media header from another, a NaN read as a level.
+
+    In every case the code had the information needed to know better and did
+    not check. And in five of them the value was not merely wrong but marked
+    `exact`, which is the flag that tells a reader the number does not need
+    checking. Reporting the wrong duration is a bug; certifying it is the
+    thing this app was built not to do.
+
+    The lesson is narrower than "validate input". It is that a parser has two
+    distinct jobs - reading what the file says, and establishing what the file
+    contains - and this codebase had been letting the first stand in for the
+    second whenever the two were expensive to tell apart.
+
+### The three P1s
+
+44. **A declared chunk size is an allocation request.** `BlobByteSource`
+    materialises exactly the range it is handed, so passing a header's declared
+    size to `read()` hands a hostile file the allocator. An AIFF COMM chunk
+    declaring 1 GiB produced a single 1,073,741,824-byte read.
+
+    AIFF INST is the same shape, and so is MP4's esds once the boxes are nested
+    properly - the review flagged both without reproducing them, and both are
+    real. Fixed by reading what the decoder can use rather than what the header
+    claims: COMM is 278 bytes at most, INST is 20, esds is capped at 64 KiB.
+
+    The test asserts the property rather than the three instances. A source
+    that claims to be 20 GB and throws if asked for more than one window means
+    a regression is a failed assertion instead of an out-of-memory.
+
+45. **The true-peak interpolator was never drained, so the end of every file
+    was measured with a filter that had not caught up.** The reconstruction at
+    any moment is built from the taps behind it; when the last sample arrives,
+    the filter has only evaluated the span around the sample twelve back. The
+    final span was never looked at.
+
+    A 0.7 transient in the last four samples read -3.098 dBTP - its own sample
+    peak - where the same signal with twelve trailing zeros read -0.559. Direct
+    sinc reconstruction settles which is right: the signal reaches 0.9507 at
+    positions 96.5 and 98.5, both inside the original span. The peak was always
+    there.
+
+    2.5 dB, in the direction that hides an over rather than inventing one, on
+    any file ending in a transient - which is most of them, because that is
+    what a fade-out is not. `finish()` now carries taps zeros through the delay
+    line, touching the true-peak state only, so duration, gating and the
+    integrated figure are bit for bit unchanged.
+
+46. **`Math.max(...blocks)` has a length limit, and it is reachable.** One
+    argument per block, and the engine gives out at a few hundred thousand -
+    125,279 here. At 100 ms per block that is 3 h 29 min of audio. A four-hour
+    recording did not measure quietly wrong, it threw `RangeError` from a line
+    that looks like arithmetic.
+
+    Worse was what the throw did on the way out. `readLoudness` sat inside the
+    same `try` as `scanAudio`, so a failure assembling a derived figure ran the
+    scan's catch and nulled `report.audio` - discarding peak, RMS, DC offset
+    and clipping that had already been measured correctly. Reading a collector
+    is a separate step from filling it, and it now fails separately.
+
+### NaN, and how it hides
+
+47. **A float WAV can hold NaN, and NaN passes a peak test without changing
+    anything.** `abs > acc.peak` is false for NaN, so the peak stays at zero;
+    `toDbfs` then sees `!(0 > 0)` and returns -Infinity. Meanwhile the sums
+    really do go NaN. A three-sample all-NaN file reported peak 0, -Infinity
+    dBFS, NaN DC offset, `digitalSilence: false`, `measured: true`,
+    `complete: true`, and not one warning.
+
+    Two failures at once, pulling opposite ways: the sums are visibly poisoned
+    while the peak is invisibly untouched. The result is a file that could not
+    be read at all, reported with the numbers of one that was read and found
+    quiet.
+
+    Non-finite samples are now counted and set aside, the denominator is the
+    finite samples so one bad sample cannot dilute good ones, and a channel
+    with nothing readable reports null throughout.
+
+48. **The fix for 47 immediately leaked through a multiplication.**
+    `(c.dcOffset * 100).toFixed(4)` on a null offset: `null * 100` is 0, and
+    `(0).toFixed(4)` is `"0.0000"`. So the newly-correct null rendered as a
+    perfectly centred channel in both the report view and the text export.
+
+    Worth recording because of how it got there. The null rule was not broken
+    by anyone deciding to print a zero - it was broken by JavaScript's
+    coercion, in code written before nulls could reach it, in two places that
+    had been correct for as long as the value was guaranteed to be a number.
+    Making a field nullable is a change to every reader of that field, and
+    grep is the only thing that knows where they are.
+
+### An answer to the review's open question
+
+49. **Multi-track MP4: name the track rather than refuse the file.** The
+    review asked whether unsupported multi-track input should be refused or
+    whether the report should identify the track it describes, noting that the
+    code's stated intention - keep the first audio track - was not what it did.
+    It wasn't: only `mdhd` honoured it, while the sample entry, esds, alac and
+    frame counts were each overwritten by every later track, so a two-track
+    file reported the first track's 44,100 Hz beside the second's 2 channels.
+    A pairing present in neither track.
+
+    Each track now fills its own scratch object and one whole track is
+    committed, chosen by its `hdlr` where the file gives one. Refusing was the
+    other option and was rejected: the file can support a reading, and
+    withholding one would be the app declining to report something it knows.
+    Naming what it describes is the same answer it gives everywhere else.
+
+### What the review did not find
+
+50. **No defect in the gating, the LRA percentiles, or the null handling in
+    the batch comparators, report summaries and CSV.** It looked, and said so
+    plainly rather than manufacturing something. It also declined to call the
+    mode prior either sound or overfitted, on the grounds that the repository
+    contains nothing that would settle it - which is the correct answer, and
+    the same one `AGENTS.md` gives. That question needs a held-out set of real
+    recordings with agreed keys, and no such set exists here yet.
+
+    Its parser fuzzing - 2,100 bounded mutations and truncations across seven
+    formats - produced no escaped exceptions. That is not a proof of
+    correctness and the review did not claim it was.
+
+**314 unit tests, 90 browser assertions, all passing.**

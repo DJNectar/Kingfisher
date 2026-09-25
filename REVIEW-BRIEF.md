@@ -258,7 +258,7 @@ FINDINGS.
 
 VERIFY RATHER THAN ASSERT
 Run the tests before and after any claim:
-    npm test                      # 299 unit tests, no browser needed
+    npm test                      # 314 unit tests, no browser needed
     python3 -m http.server 8181 & # then:
     node test/browser/e2e.mjs     # 90 assertions against the real UI
 If you claim a bug, give me the failing input or the failing test.
