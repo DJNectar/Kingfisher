@@ -190,6 +190,12 @@ async function walk(source, report) {
         data = {
           offset: payloadOffset + 4,
           size: Math.max(0, usableSize - 4),
+          // What the header claims, kept separately from what is there. The
+          // two were collapsed into one number here, so by the time the shared
+          // finalizer looked for missing audio there was nothing left to find:
+          // the chunk had already been rewritten to the size it turned out to
+          // be. An open-ended chunk declares nothing, so it claims nothing.
+          declaredSize: runsToEnd ? null : Math.max(0, size - 4),
           openEnded: runsToEnd,
         };
         entry.decoded = true;
@@ -355,9 +361,14 @@ function applyDuration(report, desc, data, packetFrames) {
   if (!data) return;
 
   report.audioData.offset = data.offset;
-  report.audioData.declaredSize = data.size;
+  report.audioData.declaredSize = data.declaredSize ?? data.size;
   report.audioData.availableSize = data.size;
-  report.audioData.shortfall = 0;
+  // An open-ended chunk is a recorder that never wrote a length, not a file
+  // with audio missing from it. Everything else that declares more than it
+  // holds is short by the difference, and the shared finalizer reads this.
+  report.audioData.shortfall = data.declaredSize === null
+    ? 0
+    : Math.max(0, data.declaredSize - data.size);
 
   if (!desc || !f.sampleRate) return;
 

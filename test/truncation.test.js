@@ -234,3 +234,33 @@ test('unknown silence exports as blank, not as "no"', async () => {
   ]);
   assert.equal(csvCell(await read('loud.wav', loud), 'All silent'), 'no');
 });
+
+test('a CAF data chunk shorter than it declares is an incomplete read', async () => {
+  // The fourth producer of the same status contradiction, missed in session 7
+  // because that session assumed the container formats all express this as a
+  // byte shortfall. CAF did not: the parser collapsed "declared" and
+  // "available" into one number at the point of reading, so by the time the
+  // shared finalizer looked for missing audio the evidence had been erased.
+  // It warned about the truncation and then reported status ok, fully read.
+  const caf = F.cafFile([F.cafChunk('desc', F.cafDesc()), F.cafData(new Uint8Array(600))]);
+  const report = await read('cut.caf', caf.subarray(0, caf.length - 6));
+
+  assert.equal(report.audioData.shortfall, 6);
+  assert.equal(report.parse.status, 'partial');
+  assert.equal(csvCell(report, 'Read result'), 'partly read');
+});
+
+test('an open-ended CAF is not truncation', async () => {
+  // A chunk size of -1 means the recorder never wrote a length - common in
+  // files captured straight to disk. It declares nothing, so it cannot declare
+  // more than it holds, and must not be downgraded.
+  const open = F.cafFile([
+    F.cafChunk('desc', F.cafDesc()),
+    F.cafChunk('data', new Uint8Array(604), { sizeOverride: -1 }),
+  ]);
+  const report = await read('open.caf', open);
+
+  assert.equal(report.audioData.shortfall, 0);
+  assert.equal(report.parse.status, 'ok');
+  assert.equal(csvCell(report, 'Read result'), 'fully read');
+});
