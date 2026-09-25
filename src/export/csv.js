@@ -31,7 +31,6 @@ const COLUMNS = [
   ['Full-scale samples', (r) => (r.audio?.measured ? r.audio.fullScaleSamples : null)],
   ['Longest full-scale run', (r) => (r.audio?.measured ? r.audio.longestFullScaleRun : null)],
   ['All silent', (r) => (r.audio?.measured ? yesNo(r.audio.digitalSilence) : null)],
-  ['Samples not readable', (r) => (r.audio?.measured ? r.audio.nonFiniteSamples : null)],
   ['Levels measured from', (r) => (r.audio?.measured ? `${(r.audio.coverage * 100).toFixed(1)}%` : null)],
   ['BWF description', (r) => r.metadata.bext?.description],
   ['BWF originator', (r) => r.metadata.bext?.originator],
@@ -119,6 +118,12 @@ const COLUMNS = [
   ['Needs a look', (r) => r.observations.filter((o) => o.severity === 'attention').map((o) => o.title).join(' | ')],
   ['Worth noting', (r) => r.observations.filter((o) => o.severity === 'notice').map((o) => o.title).join(' | ')],
   ['Checked at', (r) => r.analyzedAt],
+  // Appended, not inserted. The contract at the top of this file is that a
+  // spreadsheet built against an older export keeps working, and a positional
+  // formula does not survive a column appearing in the middle - it silently
+  // reads the neighbour instead. This one went in at position 21 and shifted
+  // every column after it one to the right.
+  ['Samples not readable', (r) => (r.audio?.measured ? r.audio.nonFiniteSamples : null)],
 ];
 
 export function reportsToCsv(reports) {

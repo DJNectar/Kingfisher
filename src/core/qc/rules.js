@@ -275,9 +275,13 @@ export const RULES = [
       return {
         id: 'duration-very-short',
         title: `Very short: ${s.toFixed(3)} seconds`,
-        detail: `This file holds ${r.duration.frames?.toLocaleString('en-US')} sample frames, ${s.toFixed(
-          3,
-        )} seconds of audio.`,
+        // The frame count can be unknown while the seconds are known. Say the
+        // part that was established rather than the word "undefined".
+        detail: r.duration.frames === null || r.duration.frames === undefined
+          ? `This file holds ${s.toFixed(3)} seconds of audio.`
+          : `This file holds ${r.duration.frames.toLocaleString('en-US')} sample frames, ${s.toFixed(
+            3,
+          )} seconds of audio.`,
       };
     },
   },
