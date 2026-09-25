@@ -183,9 +183,53 @@ async function walk(source, report) {
     ilst: null,
     hasVideoTrack: false,
     trackCount: 0,
+    audioTrackCount: 0,
+    committed: false,
   };
 
   let boxCount = 0;
+
+  /**
+   * The track currently being walked.
+   *
+   * A file can hold several tracks, and the intention has always been to report
+   * the first audio one. That only works if the fields are kept together: the
+   * timing came from the first mdhd seen while the codec and channel count came
+   * from the last stsd seen, so a two-track file reported a sample rate from one
+   * track beside a channel count from another - a combination present in
+   * neither. Each track fills its own scratch object, and one whole track is
+   * committed.
+   */
+  let scope = null;
+  const freshScope = () => ({
+    handler: null,
+    track: null,
+    sampleEntry: null,
+    esds: null,
+    alac: null,
+    frameCount: null,
+    sampleCount: null,
+  });
+
+  /** Commit the first audio track, whole, and leave later ones alone. */
+  function commitTrack(candidate) {
+    if (!candidate) return;
+    if (candidate.handler === 'soun') found.audioTrackCount++;
+    if (found.committed) return;
+    // 'soun' is the answer when the file says. When it does not, a track that
+    // produced a sample entry or a media header is the best available guess at
+    // the one being described, which is what this did before.
+    const isAudio = candidate.handler === 'soun'
+      || (candidate.handler === null && (candidate.sampleEntry || candidate.track));
+    if (!isAudio) return;
+    found.committed = true;
+    found.track = candidate.track;
+    found.sampleEntry = candidate.sampleEntry;
+    found.esds = candidate.esds;
+    found.alac = candidate.alac;
+    found.frameCount = candidate.frameCount;
+    found.sampleCount = candidate.sampleCount;
+  }
 
   /** Recursive descent. Depth is capped so a malformed file cannot loop. */
   async function descend(start, end, depth) {
@@ -240,25 +284,27 @@ async function walk(source, report) {
         found.movie = await readHeaderBox(source, bodyStart, size - headerSize);
       } else if (type === 'mdhd') {
         const box = await readHeaderBox(source, bodyStart, size - headerSize);
-        // A file can hold several tracks; keep the first audio one.
-        if (!found.track) found.track = box;
+        const into = scope ?? found;
+        if (!into.track) into.track = box;
       } else if (type === 'hdlr') {
         const v = await source.read(bodyStart + 8, 4);
         if (v.byteLength >= 4) {
           const handler = fourCC(v, 0);
           if (handler === 'vide') found.hasVideoTrack = true;
+          if (scope && !scope.handler) scope.handler = handler;
         }
       } else if (type === 'stsd') {
-        await readStsd(source, bodyStart, size - headerSize, found, report);
+        await readStsd(source, bodyStart, size - headerSize, scope ?? found, report);
       } else if (type === 'stts') {
-        found.frameCount = await readStts(source, bodyStart, size - headerSize);
+        (scope ?? found).frameCount = await readStts(source, bodyStart, size - headerSize);
       } else if (type === 'stsz') {
         const v = await source.read(bodyStart, 12);
-        if (v.byteLength >= 12) found.sampleCount = v.getUint32(8, false);
+        if (v.byteLength >= 12) (scope ?? found).sampleCount = v.getUint32(8, false);
       } else if (type === 'ilst') {
         found.ilst = await readIlst(source, bodyStart, size - headerSize);
       } else if (type === 'trak') {
         found.trackCount++;
+        scope = freshScope();
       } else if (type === 'uuid' && !report.metadata.c2pa) {
         // A `uuid` box is where ISO BMFF carries a C2PA manifest store.
         try {
@@ -304,6 +350,11 @@ async function walk(source, report) {
           // 'meta' carries a version/flags word before its children.
           await descend(bodyStart + (FULL_CONTAINERS.has(type) ? 4 : 0), bodyEnd, depth + 1);
         }
+      }
+
+      if (type === 'trak') {
+        commitTrack(scope);
+        scope = null;
       }
 
       offset += size;
@@ -720,6 +771,15 @@ function applyFormat(report, found) {
 
   if (found.hasVideoTrack) {
     addWarning(report, 'This file also contains a video track. Only its audio track is described here.');
+  }
+
+  // Say which track this describes when there is more than one to choose from.
+  // Everything above - rate, channels, codec, duration - comes from a single
+  // track, and a reader looking at a multi-track file has no way to know which
+  // one unless the report says.
+  const otherTracks = found.trackCount - (found.hasVideoTrack ? 1 : 0) - 1;
+  if (found.committed && otherTracks > 0) {
+    addWarning(report, `This file holds ${found.trackCount.toLocaleString('en-US')} tracks. Everything described here is read from the first audio track; the others are not reported.`);
   }
 }
 
