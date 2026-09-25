@@ -60,6 +60,12 @@ const FULL_CONTAINERS = new Set(['meta']);
 const MAX_BOXES = 4096;
 const MAX_METADATA_BYTES = 4 * 1024 * 1024;
 
+// An esds descriptor is tens of bytes in a real file, but its size is taken
+// from the sample entry, which the file declares. Cap the read so a declared
+// size cannot become an allocation; a descriptor larger than this is not one
+// this parser could make sense of anyway.
+const MAX_ESDS_BYTES = 64 * 1024;
+
 /** objectTypeIndication values worth naming. */
 const OBJECT_TYPES = {
   0x40: 'MPEG-4 Audio',
@@ -383,7 +389,8 @@ async function readStsd(source, offset, length, found, report) {
 
     if (childType === 'esds') {
       try {
-        const v = await source.read(childOffset + 12, childSize - 12);
+        const want = Math.min(childSize - 12, MAX_ESDS_BYTES);
+        const v = await source.read(childOffset + 12, want);
         found.esds = parseEsds(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
       } catch (err) {
         addWarning(report, `The codec description (esds) could not be read: ${err.message}. The codec profile and declared bitrate are not reported.`);
