@@ -318,3 +318,87 @@ test('stats roll up across clients and projects', async () => {
   assert.deepEqual(L.libraryStats(lib), { clients: 2, projects: 2, logEntries: 1, openTodos: 1 });
   assert.equal(L.clientStats(L.getClient(lib, c1.id)).logEntries, 1);
 });
+
+test('saving a library keeps known silence known', async () => {
+  // JSON has no way to write -Infinity, and JSON.stringify does not complain -
+  // it writes null and says nothing. -Infinity dBFS is the established reading
+  // for digital silence, so a save and reopen turned a measurement into a gap:
+  // the report came back saying the level could not be established, when it
+  // had been established and was exactly zero amplitude.
+  const { BufferByteSource } = await import('../src/core/bytes.js');
+  const { inspectSource } = await import('../src/core/registry.js');
+  const F = await import('./helpers/wav-fixtures.js');
+
+  const bytes = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 1, sampleRate: 48000, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(new Float32Array(48000).buffer)),
+  ]);
+  const report = await inspectSource(
+    new BufferByteSource(bytes), { name: 'silent.wav', size: bytes.length }, { detectTempo: false },
+  );
+  assert.equal(report.audio.peakDbfs, -Infinity, 'fixture is not the silence this test needs');
+
+  const library = createLibrary();
+  const client = L.addClient(library, 'Round trip');
+  const project = L.addProject(library, client.id, 'Silence');
+  L.addLogEntry(library, client.id, project.id, report);
+
+  const reopened = parseLibrary(serializeLibrary(library)).clients[0].projects[0].log[0].report;
+
+  assert.equal(reopened.audio.peakDbfs, -Infinity);
+  assert.equal(reopened.audio.rmsDbfs, -Infinity);
+  assert.equal(reopened.audio.channels[0].rmsDbfs, -Infinity);
+  assert.equal(reopened.loudness.truePeak, -Infinity);
+});
+
+test('a genuine null stays null across a save', async () => {
+  // The whole point of the repair is that known silence and unknown stay
+  // different. Encoding one must not accidentally resurrect the other.
+  const library = createLibrary();
+  const client = L.addClient(library, 'Round trip');
+  const project = L.addProject(library, client.id, 'Unknowns');
+  const { BufferByteSource } = await import('../src/core/bytes.js');
+  const { inspectSource } = await import('../src/core/registry.js');
+  const F = await import('./helpers/wav-fixtures.js');
+  const bytes = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 1, sampleRate: 48000, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(Float32Array.from(new Array(4800).fill(NaN)).buffer)),
+  ]);
+  const report = await inspectSource(
+    new BufferByteSource(bytes), { name: 'unknown.wav', size: bytes.length }, { detectTempo: false },
+  );
+  assert.equal(report.audio.peakDbfs, null, 'fixture is not the unknown this test needs');
+  // A string that reads like a number must come back a string.
+  report.metadata.note = '-Infinity';
+  L.addLogEntry(library, client.id, project.id, report);
+
+  const back = parseLibrary(serializeLibrary(library)).clients[0].projects[0].log[0].report;
+  assert.equal(back.audio.peakDbfs, null);
+  assert.equal(back.audio.digitalSilence, null);
+  assert.equal(back.loudness.truePeak, null);
+  assert.equal(back.metadata.note, '-Infinity');
+  assert.equal(typeof back.metadata.note, 'string');
+});
+
+test('a library saved before this repair still opens', async () => {
+  // Older files wrote null where -Infinity had been. Those readings are gone
+  // and cannot be recovered, but the file must still load.
+  const library = createLibrary();
+  const client = L.addClient(library, 'Old');
+  const project = L.addProject(library, client.id, 'File');
+  const { BufferByteSource: BBS } = await import('../src/core/bytes.js');
+  const { inspectSource: inspect2 } = await import('../src/core/registry.js');
+  const G = await import('./helpers/wav-fixtures.js');
+  const wav = G.riff([
+    G.fmtChunk({ formatTag: 3, channels: 1, sampleRate: 48000, bitsPerSample: 32 }),
+    G.chunk('data', new Uint8Array(new Float32Array(4800).buffer)),
+  ]);
+  L.addLogEntry(library, client.id, project.id, await inspect2(
+    new BBS(wav), { name: 'old.wav', size: wav.length }, { detectTempo: false },
+  ));
+  // Exactly what the old code wrote: plain stringify, so -Infinity became null.
+  const oldStyle = JSON.stringify(JSON.parse(JSON.stringify(library)), null, 2);
+
+  const back = parseLibrary(oldStyle);
+  assert.equal(back.clients[0].projects[0].log[0].report.audio.peakDbfs, null);
+});
