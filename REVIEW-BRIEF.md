@@ -95,8 +95,6 @@ Because Codex already has the repository, use this shorter version:
 SCOPE — CHECK THIS BEFORE ANYTHING ELSE
 Repository: DJNectar/Kingfisher
 Branch:     main
-            (If PR #2 has not been merged yet, use
-            claude/audio-qc-utility-mac-rzyyi7 instead — main is far behind.)
 
 Work only inside that one repository. Do not read, reference, compare against
 or borrow context from any other repository, project or workspace I have, even
@@ -173,8 +171,7 @@ rather than manufacturing a finding.
 SCOPE — CHECK THIS BEFORE ANYTHING ELSE
 REPOSITORY: https://github.com/DJNectar/Kingfisher  (public, no credentials
 needed)
-BRANCH: main  (or claude/audio-qc-utility-mac-rzyyi7 if PR #2 is not merged
-yet — main is far behind until it is)
+BRANCH: main
 
 Work only inside that one repository. Do not read, reference, compare against
 or borrow context from any other repository, project or workspace, even if one
