@@ -78,6 +78,13 @@ there.
   it is available in Work and Codex, and that usage does not draw on the chat
   allowance. Check the current position before relying on it.
 
+**Scope it explicitly.** Codex can usually see every repository you have
+connected, and "review this codebase" does not tell it which one you mean. The
+prompt below names the repository and branch, forbids reaching into any other,
+and asks it to state what it is looking at before it starts — including whether
+`AGENTS.md` is present, which is a cheap canary for being on the wrong branch,
+since that file does not exist on older ones.
+
 The constraint in Codex is messages, not tokens: on Plus, roughly 5–45 per five
 hours. So send the whole brief in one message rather than drip-feeding it, and
 keep a few messages back for the questions the brief invites.
@@ -85,6 +92,25 @@ keep a few messages back for the questions the brief invites.
 Because Codex already has the repository, use this shorter version:
 
 ```
+SCOPE — CHECK THIS BEFORE ANYTHING ELSE
+Repository: DJNectar/Kingfisher
+Branch:     main
+            (If PR #2 has not been merged yet, use
+            claude/audio-qc-utility-mac-rzyyi7 instead — main is far behind.)
+
+Work only inside that one repository. Do not read, reference, compare against
+or borrow context from any other repository, project or workspace I have, even
+if one looks related or shares a name. Anything you report must come from this
+repository alone.
+
+Before you start, tell me three things so I can catch a wrong target early:
+  1. The repository you are looking at.
+  2. The branch, and the SHA of its latest commit.
+  3. Whether AGENTS.md exists at the root.
+
+If AGENTS.md is not there, you are on the wrong branch or the wrong repository.
+Stop and say so rather than reviewing whatever you have found.
+
 Review this codebase critically. Be adversarial — I want bugs found, not
 reassurance. If an area is clean, say so plainly rather than manufacturing a
 finding.
@@ -144,10 +170,19 @@ I'd like a critical review of a JavaScript codebase. Be adversarial — I want
 bugs found, not reassurance. If you find nothing in an area, say so plainly
 rather than manufacturing a finding.
 
+SCOPE — CHECK THIS BEFORE ANYTHING ELSE
 REPOSITORY: https://github.com/DJNectar/Kingfisher  (public, no credentials
 needed)
-BRANCH: claude/audio-qc-utility-mac-rzyyi7
-(Not `main` — main is well behind and missing most of the app.)
+BRANCH: main  (or claude/audio-qc-utility-mac-rzyyi7 if PR #2 is not merged
+yet — main is far behind until it is)
+
+Work only inside that one repository. Do not read, reference, compare against
+or borrow context from any other repository, project or workspace, even if one
+looks related. Everything you report must come from this repository alone.
+
+Before you start, tell me the repository, the branch and its latest commit SHA,
+and whether AGENTS.md exists at the root. If AGENTS.md is missing you are in
+the wrong place — stop and say so rather than reviewing whatever you found.
 
 READ AGENTS.md FIRST. It explains the architecture, names the things that look
 like bugs but are deliberate, and lists two design rules. If you cannot clone
