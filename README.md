@@ -95,6 +95,7 @@ Adding a format is a new module in `src/core/parsers/` plus a
 | `DECISIONS.md` | Product and distribution reasoning: what was researched rather than built, and the answers that were "no". |
 | `OVERVIEW.md` | What the app does, feature by feature. |
 | `ROADMAP.md` | What is deliberately not done, with reasons. |
+| `REVIEW-BRIEF.md` | A ready-to-paste prompt for having another model review this code, and why it is worded the way it is. |
 
 **A sortable batch table.** Point it at a folder and one row per file appears
 above the reports — sort by loudness, true peak, sample rate or anything else,
