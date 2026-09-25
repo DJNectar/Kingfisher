@@ -570,6 +570,23 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
   };
 }
 
+/**
+ * The loudest block, in LUFS, or null if there are none.
+ *
+ * A plain loop rather than Math.max over a spread: see the note at the call
+ * site. The block count rises with duration without limit, and the spread's
+ * does not.
+ */
+export function maxBlockLoudness(powers) {
+  if (!powers.length) return null;
+  let best = -Infinity;
+  for (const p of powers) {
+    const l = blockLoudness(p);
+    if (l > best) best = l;
+  }
+  return best;
+}
+
 /** dB from a linear amplitude, with silence as -Infinity rather than NaN. */
 function toDb(linear) {
   if (!(linear > 0)) return -Infinity;
@@ -596,12 +613,14 @@ function finishLoudness({
   const integrated = integratedFromBlocks(momentaryPowers);
   const range = rangeFromBlocks(shortTermPowers);
 
-  const momentaryMax = momentaryPowers.length
-    ? Math.max(...momentaryPowers.map(blockLoudness))
-    : null;
-  const shortTermMax = shortTermPowers.length
-    ? Math.max(...shortTermPowers.map(blockLoudness))
-    : null;
+  // Iterated, not spread. Math.max(...blocks) passes one argument per block,
+  // and the engine's argument limit is reached at a few hundred thousand: a
+  // 3 h 29 min file produces 125,280 momentary blocks and throws RangeError
+  // where a 3 h 28 min file returns a number. That is a length limit nobody
+  // declared, arriving as a crash, on exactly the long recordings - sets, live
+  // captures, transfers - where finishing the measurement matters most.
+  const momentaryMax = maxBlockLoudness(momentaryPowers);
+  const shortTermMax = maxBlockLoudness(shortTermPowers);
 
   let integratedReason = null;
   if (!integrated) {

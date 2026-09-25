@@ -26,6 +26,7 @@ import {
   integratedFromBlocks,
   oversamplingFactor,
   interpolatorPhases,
+  maxBlockLoudness,
 } from '../src/core/audio/loudness.js';
 import { BufferByteSource } from '../src/core/bytes.js';
 import { inspectSource } from '../src/core/registry.js';
@@ -384,4 +385,23 @@ test('the true-peak interpolator is drained at end of stream', () => {
   // the original span, against a sample peak of 0.7 (-3.098 dBFS).
   assert.ok(atEnd > -3.0, `true peak ${atEnd} dBTP did not exceed the -3.098 dBFS sample peak`);
   assert.ok(atEnd < 20 * Math.log10(0.9506855) + 0.2, `true peak ${atEnd} dBTP overshot the ideal reconstruction`);
+});
+
+test('the loudest block is found without an argument limit', () => {
+  // Math.max(...blocks) passes one argument per block. The engine's limit is
+  // reached at a few hundred thousand - measured at 125,279 on the Node this
+  // was written against - so a long enough recording turned a finished
+  // measurement into a RangeError. At 100 ms per block that is 3 h 29 min:
+  // a DJ set, a live capture, a tape transfer. Nothing declares that limit and
+  // it arrives as a crash, not a refusal.
+  const many = new Array(200000).fill(0.01);
+  many[123456] = 1;
+
+  let loudest;
+  assert.doesNotThrow(() => { loudest = maxBlockLoudness(many); }, 'threw on 200,000 blocks');
+  assert.equal(loudest, blockLoudness(1), 'did not find the loudest block');
+
+  // And the empty case stays null rather than -Infinity: no blocks is not
+  // silence, it is nothing measured.
+  assert.equal(maxBlockLoudness([]), null);
 });

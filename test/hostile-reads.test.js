@@ -109,3 +109,35 @@ test('an MP4 sample entry declaring a gigabyte does not drag esds with it', asyn
 
   assert.ok(largest <= MAX_WINDOW, `largest read was ${largest} bytes`);
 });
+
+/**
+ * A derived figure that cannot be assembled must not take the measurement with
+ * it. The levels come off the scan; loudness, tempo and key are worked out from
+ * what the scan collected. Reading one of those is a separate step that fails
+ * separately, and folding it into the scan's own catch meant a failure there
+ * discarded report.audio too - throwing away peak, RMS, DC offset and clipping
+ * that had already been measured correctly.
+ */
+test('a derived figure that throws is reported as missing, not as a number', async () => {
+  const { derive } = await import('../src/core/registry.js');
+  const { createReport } = await import('../src/core/report.js');
+
+  const report = createReport({ name: 'x.wav', size: 100 });
+  let result;
+  assert.doesNotThrow(() => {
+    result = derive(report, 'loudness', () => {
+      throw new RangeError('Maximum call stack size exceeded');
+    });
+  }, 'the failure escaped instead of being contained');
+
+  // Unknown is null, never zero and never a guess.
+  assert.equal(result, null);
+  assert.equal(report.parse.warnings.length, 1);
+  assert.match(report.parse.warnings[0].message, /loudness could not be worked out/i);
+  assert.match(report.parse.warnings[0].message, /levels are measured and unaffected/i);
+
+  // And a figure that works is returned untouched, with nothing added.
+  const before = report.parse.warnings.length;
+  assert.equal(derive(report, 'tempo', () => 120), 120);
+  assert.equal(report.parse.warnings.length, before);
+});
