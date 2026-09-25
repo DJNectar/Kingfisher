@@ -4,6 +4,11 @@ A ready-to-paste prompt for having another model review this codebase, plus the
 reasoning behind how it is written. Kept in the repo so the next review starts
 from the same place rather than being improvised.
 
+> **What to paste:** only the fenced block under [The prompt](#the-prompt), or
+> the shorter one under [Running it in Codex](#running-it-in-codex) if that is
+> where you are. Everything else in this file is context for you, not for the
+> reviewer.
+
 ## Why it is shaped this way
 
 An outside review of this project has two failure modes, and the prompt is
@@ -56,9 +61,81 @@ at exactly that than GPT-5.6 Sol.
 
 Re-check this section before relying on it; model availability moves quickly.
 
+## Running it in Codex
+
+**Prefer Codex over a chat window**, and not only because the model is better
+there.
+
+- **It clones the repository itself.** The source is roughly 166,000 tokens,
+  which is awkward to paste anywhere and impossible in most chat windows. In
+  Codex it simply is not your problem.
+- **It can run the tests.** The brief asks the reviewer to verify rather than
+  assert, and `npm test` is the whole point of that instruction. A chat window
+  can only read the code and guess.
+- **It reads `AGENTS.md` by convention.** That file is named for this.
+- **On a Plus plan the allowance is separate.** As of September 2026, Astra is
+  not offered in ordinary Chat on Plus — GPT-5.6 Sol is the ceiling there — but
+  it is available in Work and Codex, and that usage does not draw on the chat
+  allowance. Check the current position before relying on it.
+
+The constraint in Codex is messages, not tokens: on Plus, roughly 5–45 per five
+hours. So send the whole brief in one message rather than drip-feeding it, and
+keep a few messages back for the questions the brief invites.
+
+Because Codex already has the repository, use this shorter version:
+
+```
+Review this codebase critically. Be adversarial — I want bugs found, not
+reassurance. If an area is clean, say so plainly rather than manufacturing a
+finding.
+
+Read AGENTS.md first. It gives the architecture, the two design rules, and the
+things that look like defects but are deliberate.
+
+Two rules that are NOT style preferences, both enforced by tests:
+  1. It reports, it does not judge. No target, no comparison, no pass/fail.
+     Do not suggest adding loudness targets, platform presets or green ticks.
+  2. Unknown is null, never zero. Never 0, "" or a guess.
+Flag violations. Do not "fix" the rules themselves.
+
+When something looks wrong, find out why before calling it a bug. Check the
+comment above it, then BUILD_LOG.md (a session-by-session record of every bug
+and its cause), then AGENTS.md. If you still do not understand it, ASK ME
+rather than assuming odd means wrong.
+
+Keep three lists:
+  FINDINGS       things that are wrong
+  QUESTIONS      things you could not understand or resolve
+  DISAGREEMENTS  deliberate decisions you think are the wrong call
+
+Concentrate, in this order:
+  1. src/core/parsers/ against malformed, truncated and hostile input. They
+     are meant to refuse rather than guess. Prove or disprove that.
+  2. src/core/audio/loudness.js — K-weighting derived per rate, the two-stage
+     gating, LRA percentiles, and the 8x polyphase true-peak interpolator
+     including its skip bound. It passes the nine EBU Tech 3341/3342
+     compliance cases; I want the maths read, not just the tests trusted.
+  3. src/core/audio/key.js — is the 0.53 mode prior sound, or overfitted to
+     synthetic fixtures? The least-verified decision in the codebase.
+  4. Anywhere null-never-zero leaks: comparators, aggregations, exports.
+  5. Whether the windowed-read claim holds — a 20GB file in a few megabytes.
+
+Run the tests; do not just read them:
+    npm test
+    python3 -m http.server 8181 &
+    node test/browser/e2e.mjs
+Mark each finding CONFIRMED (you can name the input that produces the wrong
+output) or SUSPECTED. Give file, line, the failing input, and the consequence.
+A confident wrong finding costs me more than a missed one.
+
+Do not open a pull request, rewrite, reformat, or add dependencies. I want the
+analysis; I will decide what changes.
+```
+
 ## The prompt
 
-Paste everything between the rules.
+For a chat window, or any tool without repository access. Paste everything
+between the rules.
 
 ---
 
