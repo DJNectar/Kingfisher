@@ -49,11 +49,28 @@ const fmtHz = (v) => `${v.toLocaleString('en-US')} Hz`;
  * Every rule that reads a level goes through here, so the guard cannot be
  * forgotten in one of them. A genuine -Infinity from real silence is a number
  * and passes; a null does not.
+ *
+ * It deliberately does not require the aggregate `digitalSilence` to be known.
+ * That field is unknown whenever any one channel could not be read, and a file
+ * with one unreadable channel still has a real peak and real per-channel
+ * findings in the channels that were read. Requiring it here would suppress
+ * those as a side effect of a different channel's damage.
  */
+/**
+ * "in the file", or "in the part of it that could be read".
+ *
+ * A level is a maximum or a mean over the samples that were readable. When
+ * every sample was, those are the same sentence. When some were not, the
+ * unqualified one claims a scope the measurement does not have.
+ */
+function overWhat(a) {
+  return a.nonFiniteSamples > 0
+    ? 'in the readable part of this file'
+    : 'in this file';
+}
+
 function levelsEstablished(a) {
-  return Boolean(a?.measured)
-    && typeof a.peakDbfs === 'number'
-    && typeof a.digitalSilence === 'boolean';
+  return Boolean(a?.measured) && typeof a.peakDbfs === 'number';
 }
 
 export const RULES = [
@@ -324,18 +341,33 @@ export const RULES = [
     evaluate(r) {
       const a = r.audio;
       if (!levelsEstablished(a) || a.digitalSilence) return null;
-      const silent = a.channels.filter((c) => c.digitalSilence);
+      const named = (list) => list.map((c) => `${c.name} (channel ${c.index + 1})`).join(', ');
+      const silent = a.channels.filter((c) => c.digitalSilence === true);
       if (!silent.length) return null;
+      // "The others carry audio" was asserted about every channel that was not
+      // silent, including channels that could not be read at all. Say only what
+      // was established: these are silent, those were not readable, the rest
+      // carry audio - and drop whichever clause has nobody in it.
+      const unreadable = a.channels.filter((c) => c.digitalSilence === null);
+      const carrying = a.channels.filter((c) => c.digitalSilence === false);
+      const rest = [
+        carrying.length
+          ? `${named(carrying)} ${carrying.length === 1 ? 'carries' : 'carry'} audio`
+          : null,
+        unreadable.length
+          ? `${named(unreadable)} could not be read, so whether ${
+            unreadable.length === 1 ? 'it carries' : 'they carry'
+          } audio is not established`
+          : null,
+      ].filter(Boolean);
       return {
         id: 'channel-silence',
         title: `${silent.length} of ${a.channels.length} channel${
           a.channels.length === 1 ? '' : 's'
         } ${silent.length === 1 ? 'is' : 'are'} silent`,
-        detail: `${silent
-          .map((c) => `${c.name} (channel ${c.index + 1})`)
-          .join(', ')} ${
+        detail: `${named(silent)} ${
           silent.length === 1 ? 'contains' : 'contain'
-        } only zero samples, while the others carry audio.`,
+        } only zero samples${rest.length ? `. ${rest.join('. ')}` : ''}.`,
       };
     },
   },
@@ -418,7 +450,7 @@ export const RULES = [
       return {
         id: 'peak-at-ceiling',
         title: `Peak reaches ${fmtDb(a.peakDbfs)} dBFS`,
-        detail: `The loudest sample is ${fmtDb(
+        detail: `The loudest sample ${overWhat(a)} is ${fmtDb(
           a.peakDbfs,
         )} dBFS, at the very top of the available scale, with no isolated run long enough to look like flat-topping.`,
       };
@@ -448,7 +480,7 @@ export const RULES = [
       return {
         id: 'level-very-low',
         title: `Peak is ${fmtDb(a.peakDbfs)} dBFS`,
-        detail: `The loudest sample in the file is ${fmtDb(
+        detail: `The loudest sample ${overWhat(a)} is ${fmtDb(
           a.peakDbfs,
         )} dBFS, well below full scale.`,
       };

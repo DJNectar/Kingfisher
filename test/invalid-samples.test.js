@@ -100,3 +100,56 @@ test('real silence still reports as silence', async () => {
   assert.equal(report.audio.peakDbfs, -Infinity);
   assert.ok(report.observations.some((o) => o.id === 'digital-silence'));
 });
+
+test('an unreadable channel is not reported as carrying audio', async () => {
+  // Left all zero, right all NaN. Per-channel silence is [true, null] - one
+  // established, one not. The aggregate collapsed that null to false via
+  // `every(c => c === true)`, so the file exported "All silent: no" and the
+  // channel observation said the left is silent "while the others carry
+  // audio". No readable non-zero sample exists anywhere in this file.
+  const frames = 48000;
+  const interleaved = Float32Array.from({ length: frames * 2 }, (_, i) => (i % 2 ? NaN : 0));
+  const bytes = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 2, sampleRate: SR, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(interleaved.buffer)),
+  ]);
+  const report = await inspectSource(
+    new BufferByteSource(bytes), { name: 'half-unreadable.wav', size: bytes.length }, { detectTempo: false },
+  );
+
+  assert.deepEqual(report.audio.channels.map((c) => c.digitalSilence), [true, null]);
+  assert.equal(report.audio.digitalSilence, null, 'unknown silence collapsed to a definite answer');
+
+  const said = report.observations.find((o) => o.id === 'channel-silence');
+  assert.ok(said, 'the established per-channel fact was suppressed');
+  assert.match(said.detail, /FL \(channel 1\) contains only zero samples/);
+  assert.doesNotMatch(said.detail, /others carry audio/, 'claimed audio in a channel it could not read');
+  assert.match(said.detail, /FR \(channel 2\) could not be read/);
+
+  // A level statement scoped to the whole file, when part of it was not read.
+  const low = report.observations.find((o) => o.id === 'level-very-low');
+  if (low) assert.match(low.detail, /readable part of this file/);
+});
+
+test('a fully readable file still gets the plain wording', async () => {
+  // The qualifier must appear only where it is earned.
+  const bytes = F.riff([
+    F.fmtChunk({ channels: 2, sampleRate: 44100, bitsPerSample: 16 }),
+    F.chunk('data', F.pcmData({
+      frames: 4410, channels: 2, bitsPerSample: 16,
+      gen: (f, c) => (c === 0 ? 0 : 0.0001 * Math.sin((2 * Math.PI * 440 * f) / 44100)),
+    })),
+  ]);
+  const report = await inspectSource(
+    new BufferByteSource(bytes), { name: 'one-silent.wav', size: bytes.length }, { detectTempo: false },
+  );
+
+  assert.equal(report.audio.digitalSilence, false);
+  const said = report.observations.find((o) => o.id === 'channel-silence');
+  assert.ok(said);
+  assert.match(said.detail, /carries audio|carry audio/, 'a channel that does carry audio went unmentioned');
+  assert.doesNotMatch(said.detail, /could not be read/);
+
+  const low = report.observations.find((o) => o.id === 'level-very-low');
+  if (low) assert.doesNotMatch(low.detail, /readable part/);
+});

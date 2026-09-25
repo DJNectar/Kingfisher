@@ -162,10 +162,15 @@ export function finishStats({
     rmsDbfs: rmsOverall === null ? null : toDbfs(rmsOverall),
     fullScaleSamples: channels.reduce((sum, c) => sum + c.fullScaleSamples, 0),
     longestFullScaleRun: Math.max(...channels.map((c) => c.longestFullScaleRun)),
-    // Only a claim about silence if there was something to look at.
-    digitalSilence: readableChannels.length
-      ? channels.every((c) => c.digitalSilence === true)
-      : null,
+    // Three states, because two cannot hold the answer. "Is the whole file
+    // silent?" has no true or false when part of it could not be read, and
+    // `every(c => c === true)` answers false for exactly that case - turning a
+    // question nobody could answer into a confident "no, there is audio here".
+    // Unknown anywhere makes the aggregate unknown; the per-channel facts that
+    // WERE established stay on their own channels, where they are still true.
+    digitalSilence: channels.some((c) => c.digitalSilence === null)
+      ? null
+      : (readableChannels.length ? channels.every((c) => c.digitalSilence === true) : null),
     /** Samples that were not finite numbers, and so could not be measured. */
     nonFiniteSamples,
     channels,
