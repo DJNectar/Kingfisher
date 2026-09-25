@@ -85,6 +85,17 @@ Some deliberate absences:
 Adding a format is a new module in `src/core/parsers/` plus a
 `registerParser()` call — no changes to the UI, rules or exporters.
 
+## The documentation
+
+| File | What is in it |
+| --- | --- |
+| `AGENTS.md` | Read first if you are reviewing or changing the code. The two rules that are not style preferences, where the hard parts are, what looks like a bug and is not, and what not to touch. Symlinked as `CLAUDE.md`. |
+| `ARCHITECTURE.md` | How it is put together. |
+| `BUILD_LOG.md` | Why, session by session — every bug worth remembering, what caused it, and what it cost to find. |
+| `DECISIONS.md` | Product and distribution reasoning: what was researched rather than built, and the answers that were "no". |
+| `OVERVIEW.md` | What the app does, feature by feature. |
+| `ROADMAP.md` | What is deliberately not done, with reasons. |
+
 **A sortable batch table.** Point it at a folder and one row per file appears
 above the reports — sort by loudness, true peak, sample rate or anything else,
 then click a row to jump to that file's detail. Values that could not be
