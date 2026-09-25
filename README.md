@@ -154,10 +154,14 @@ library. CSV gives one row per file for sorting a delivery in a spreadsheet.
 ## Tests
 
 ```bash
-npm test
+npm test                      # 299 unit tests, no dependencies needed
+
+python3 -m http.server 8181 &
+node test/browser/e2e.mjs     # 90 assertions against the real UI
 ```
 
-Runs against WAV files built byte by byte in `test/helpers/wav-fixtures.js`
+`npm test` runs against WAV files built byte by byte in
+`test/helpers/wav-fixtures.js`
 (different bit depths, extensible format, a real `bext`, RF64, malformed,
 truncated, silent, clipped), plus the library round trip and a PDF structural
 validator.
