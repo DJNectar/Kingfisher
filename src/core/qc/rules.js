@@ -260,6 +260,29 @@ export const RULES = [
 
   // ----------------------------------------------------------------- signal
   {
+    id: 'samples-not-finite',
+    severity: SEVERITY.ATTENTION,
+    evaluate(r) {
+      const a = r.audio;
+      if (!a?.measured || !a.nonFiniteSamples) return null;
+      const dead = a.channels.filter((c) => c.peak === null);
+      const where = dead.length
+        ? ` No level could be established for ${dead
+          .map((c) => `${c.name} (channel ${c.index + 1})`)
+          .join(', ')}, so those readings are left blank.`
+        : ' The levels shown are measured from the samples that were readable.';
+      return {
+        id: 'samples-not-finite',
+        title: `${a.nonFiniteSamples} sample${a.nonFiniteSamples === 1 ? '' : 's'} could not be read as a number`,
+        detail: `${a.nonFiniteSamples} of the sample${
+          a.nonFiniteSamples === 1 ? '' : 's'
+        } in this file ${
+          a.nonFiniteSamples === 1 ? 'is' : 'are'
+        } not a finite value - NaN or an infinity, which a float file can hold and a converter cannot play.${where}`,
+      };
+    },
+  },
+  {
     id: 'digital-silence',
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
