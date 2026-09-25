@@ -94,6 +94,12 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
     }
     if (f.sampleEndianness === 'big') lines.push(row('Byte order', 'big-endian'));
 
+    if (report.isrc) {
+      lines.push(section('ISRC'));
+      lines.push(row('Recording code', report.isrc.formatted));
+      lines.push(row('Found in', report.isrc.where));
+    }
+
     lines.push(section('DURATION'));
     if (report.duration.seconds === null) {
       lines.push(`  ${UNKNOWN}  (could not be determined — see Read result above)`);

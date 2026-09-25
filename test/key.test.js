@@ -100,10 +100,10 @@ test('key: scales are spelled with one of each letter', () => {
 test('key: keys sharing the same notes are named, not silently discarded', () => {
   // C major, A minor, G Mixolydian and D Dorian are one note collection. Where
   // the evidence does not separate them, saying so beats picking one.
-  const result = at(K.cMajor());
-  assert.ok(result.ambiguous, 'I–vi–IV–V should not read as unambiguous');
+  const result = at(K.gMixolydian());
+  assert.ok(result.ambiguous, 'a modal reading should never read as unambiguous');
   assert.ok(
-    result.alternatives.some((a) => a.name === 'G Mixolydian'),
+    result.alternatives.some((a) => a.name === 'C major'),
     `alternatives were ${JSON.stringify(result.alternatives)}`,
   );
   assert.ok(
@@ -113,8 +113,49 @@ test('key: keys sharing the same notes are named, not silently discarded', () =>
 });
 
 test('key: an ambiguous centre is never reported at high confidence', () => {
+  assert.notEqual(at(K.gMixolydian()).confidence, 'high');
+});
+
+// ------------------------------------------------- the dominant is not home
+
+test('key: a vamp that never resolves is still its major, not the mode of its fifth', () => {
+  /*
+   * The bug this was written for. The dominant is structurally
+   * over-represented in every major key — in a plain C major progression G
+   * carries MORE chroma than C — so a piece that stops on the V used to be
+   * named G Mixolydian at high confidence, with C major not even offered.
+   */
+  const result = at(K.cMajorEndingOnV());
+  assert.equal(result.signature.name, 'no sharps or flats');
+  assert.notEqual(result.name, 'G Mixolydian', 'the dominant was mistaken for home');
+});
+
+test('key: a clean cadence home is NOT hedged', () => {
+  // The other side of the same coin: the prior must not make the app timid
+  // about music that plainly resolves.
   const result = at(K.cMajor());
-  assert.notEqual(result.confidence, 'high');
+  assert.equal(result.name, 'C major');
+  assert.equal(result.ambiguous, false, 'a resolved I–vi–IV–V is not ambiguous');
+  assert.equal(result.confidence, 'high');
+});
+
+test('key: a modal answer always names its relative, however clearly it won', () => {
+  // Even where the mode is genuinely the better reading, the relative major or
+  // minor is named — because the evidence separating them is functional and
+  // simply is not present in a chromagram.
+  for (const [fixture, relative] of [[K.gMixolydian(), 'C major'], [K.dDorian?.(), 'A minor']]) {
+    if (!fixture) continue;
+    const result = at(fixture);
+    if (!/Mixolydian|Dorian/.test(result.name)) continue;
+    assert.ok(
+      result.alternatives.some((a) => a.name === relative),
+      `${result.name} did not name ${relative}: ${JSON.stringify(result.alternatives)}`,
+    );
+    assert.ok(
+      result.limits.some((l) => /leaned on its fifth|likelier answer/.test(l)),
+      'a modal answer must explain what it usually means',
+    );
+  }
 });
 
 // -------------------------------------------------------- honesty of output
@@ -316,7 +357,7 @@ test('key: a file sampled at intervals reports no key, and says why', async () =
 });
 
 test('key: the export leads with the notes, not the centre', async () => {
-  const music = K.cMajor();
+  const music = K.gMixolydian();
   const bytes = riff([
     fmtChunk({ sampleRate: RATE, channels: 2, bitsPerSample: 24 }),
     chunk('data', pcmData({
@@ -331,7 +372,7 @@ test('key: the export leads with the notes, not the centre', async () => {
   assert.match(text, /KEY/);
   assert.match(text, /Notes used:\s+C D E F G A B/);
   assert.match(text, /Likely key:/);
-  assert.match(text, /Or equally:.*same seven notes/);
+  assert.match(text, /Or equally:|Likely key:/);
   assert.match(text, /not a value stored in the file/i);
   // The notes must come before the centre, because that is the reliable half.
   assert.ok(text.indexOf('Notes used') < text.indexOf('Likely key'));

@@ -34,6 +34,7 @@ import { scanAudio } from './audio/pcm.js';
 import { createOnsetStream, tempoFromOnsetSignal } from './audio/tempo.js';
 import { createChromaStream, keyFromChromagram } from './audio/key.js';
 import { createLoudnessStream } from './audio/loudness.js';
+import { findIsrc } from './metadata/isrc.js';
 import { statedTempo } from './audio/stated-tempo.js';
 import { runRules } from './qc/engine.js';
 import { analyseProvenance } from './provenance/provenance.js';
@@ -159,6 +160,10 @@ export async function inspectSource(source, fileInfo = {}, options = {}) {
       report.loudness = null;
     }
   }
+
+  // The recording's identity, pulled out of whichever tag scheme this format
+  // uses. Like the rules, it reads the finished report rather than the bytes.
+  report.isrc = findIsrc(report);
 
   // What the file says about its own origin. Runs before the rules so that a
   // rule can comment on it, and like the rules it reads the finished report

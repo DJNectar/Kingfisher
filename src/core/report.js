@@ -186,6 +186,20 @@ export function createReport(file = {}) {
      */
     loudness: null,
 
+    /**
+     * The recording's ISRC, where the file carries one.
+     *
+     * Kept out of `metadata` and given its own field because it is not really
+     * metadata about the file — it is the identity of the recording inside it,
+     * the thing a distributor, a society and a royalty statement all key on.
+     * At delivery it is checked more often than anything else here, so it sits
+     * with the headline facts rather than inside a tag list.
+     *
+     * {code, formatted, where} or null. Validated, not just read: see
+     * core/metadata/isrc.js for why that distinction matters in RIFF.
+     */
+    isrc: null,
+
     /** Factual notes produced by the observation rules. Never comparisons. */
     observations: [],
 
@@ -277,6 +291,8 @@ export function summarizeReport(report) {
     integratedLufs: report.loudness?.measured ? report.loudness.integrated : null,
     loudnessRange: report.loudness?.measured ? report.loudness.range : null,
     truePeakDbtp: report.loudness?.measured ? report.loudness.truePeak : null,
+
+    isrc: report.isrc?.code ?? null,
 
     originFlag: report.provenance?.assessment?.flag ?? null,
     originConfidence: report.provenance?.assessment?.confidence ?? null,

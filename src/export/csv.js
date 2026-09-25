@@ -56,7 +56,10 @@ const COLUMNS = [
   ['Artist', (r) => anyTag(r, ['TPE1', 'TP1'], ['©ART'], ['ARTIST'], (m) => m.iff?.author ?? m.id3v1?.artist)],
   ['Album', (r) => anyTag(r, ['TALB', 'TAL'], ['©alb'], ['ALBUM'], (m) => m.id3v1?.album)],
   ['Track', (r) => anyTag(r, ['TRCK', 'TRK'], ['trkn'], ['TRACKNUMBER'], (m) => m.id3v1?.track)],
-  ['ISRC', (r) => anyTag(r, ['TSRC'], [], ['ISRC'], () => null)],
+  // Resolved and validated rather than read straight off a tag: in RIFF the
+  // four characters ISRC mean "Source", not a recording code.
+  ['ISRC', (r) => r.isrc?.formatted ?? null],
+  ['ISRC found in', (r) => r.isrc?.where ?? null],
   ['Gapless true length (s)', (r) => round(r.metadata.gapless?.trueSeconds, 6)],
   ['Encoded peak (dBFS)', (r) => dbfs(r.metadata.lame?.peakDbfs)],
   ['Audio MD5', (r) => r.metadata.flac?.md5],
@@ -150,6 +153,7 @@ export function historyToCsv(rowsIn) {
       put('Duration (h:mm:ss)', clock(s.durationSeconds));
       put('Codec', s.codec);
       put('Peak (dBFS)', dbfs(s.peakDbfs));
+      put('ISRC', s.isrc);
       put('Integrated loudness (LUFS)', round(s.integratedLufs, 2));
       put('Loudness range (LU)', round(s.loudnessRange, 2));
       put('True peak (dBTP)', dbfs(s.truePeakDbtp));

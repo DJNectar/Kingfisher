@@ -91,6 +91,18 @@ export const cMajor = (opts) => progression([
   { bass: PC.G, notes: major(PC.G) },
 ], opts);
 
+/**
+ * C major that never cadences home: the dominant gets as much bass time as the
+ * tonic and the progression stops on it. Ordinary in pop — a vamp, a fade-out,
+ * a cold ending — and the case that used to come back as G Mixolydian.
+ */
+export const cMajorEndingOnV = (opts) => progression([
+  { bass: PC.C, notes: major(PC.C) },
+  { bass: PC.G, notes: major(PC.G) },
+  { bass: PC.F, notes: major(PC.F) },
+  { bass: PC.G, notes: major(PC.G) },
+], opts);
+
 /** i – VI – III – V – i in A minor: the same seven notes as C major. */
 export const aMinor = (opts) => progression([
   { bass: PC.A, notes: minor(PC.A) },
@@ -99,7 +111,16 @@ export const aMinor = (opts) => progression([
   { bass: PC.E, notes: major(PC.E) },
 ], opts);
 
-/** I – ♭VII – IV – I on G: C major's notes, centred on G. The modal case. */
+/**
+ * I – ♭VII – IV – I on G: C major's notes, centred on G. The modal case.
+ *
+ * Worth being honest about what this can and cannot prove. It measures within
+ * a fraction of a percent of `cMajorEndingOnV` on every piece of evidence a
+ * chromagram carries, because what separates the two is harmonic function, not
+ * note content. It is here to check that the app SAYS so — naming C major
+ * beside it and declining to call the answer settled — not to check that the
+ * app tells them apart, which on this evidence nothing could.
+ */
 export const gMixolydian = (opts) => progression([
   { bass: PC.G, notes: major(PC.G) },
   { bass: PC.F, notes: major(PC.F) },

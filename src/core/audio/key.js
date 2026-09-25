@@ -106,12 +106,54 @@ function spellMajorScale(root) {
  * Locrian are real but rare enough that offering them would add noise to every
  * answer to be right about one record in a thousand.
  */
+/**
+ * The four readings of one note collection, and how likely each is before any
+ * audio is examined.
+ *
+ * WHY A PRIOR IS NEEDED HERE, of all places. The dominant is structurally
+ * over-represented in every major key: G is the fifth of C, the root of V and
+ * the fifth of iii, so in a plain C major progression G carries MORE chroma
+ * than C does — measured at 28.0% against 23.0% on a textbook I-IV-V-I.
+ * Music that resolves home survives this, because the ending gives the tonic
+ * away. Music that vamps, fades out or simply stops on the V does not, and
+ * gets named as the Mixolydian mode of its own fifth.
+ *
+ * That failure was found in the fixtures once and fixed by making them resolve.
+ * It was never fixed in the detector, and real records do not all resolve.
+ *
+ * The two cases are genuinely indistinguishable by this evidence — a C major
+ * vamp ending on G and a real G Mixolydian vamp measure within 0.1% of each
+ * other. When the evidence cannot separate two readings, what settles it is
+ * which is more common, and in the popular music this app is pointed at,
+ * major and minor outnumber the modes by more than an order of magnitude.
+ *
+ * So the modes must win clearly rather than narrowly. This is the same move
+ * the tempo estimator already makes with its 120 BPM perceptual prior, for the
+ * same reason: a prior is not a thumb on the scale when the alternative is
+ * letting a systematic bias decide.
+ *
+ * The weights were swept, not guessed, and the usable window is narrower than
+ * it first looks. Above about 0.55 a C major vamp stopping on the dominant
+ * still reads as G Mixolydian — the bug is not fixed. Below about 0.52 a
+ * genuinely modal I-bVII-IV-I stops surviving transposition: resampling
+ * smears the chroma, the modal evidence weakens, and the prior tips it into
+ * the relative major. Below 0.4 the modes become unreachable entirely.
+ *
+ * So 0.53 sits in the middle of 0.52-0.55. Worth being plain that this is
+ * calibrated against synthetic fixtures, and that the lower bound comes from
+ * DEGRADED audio rather than from real music, so the practical window is
+ * probably wider than the measured one. If real records turn out to be named
+ * modal too often, this is the number to move.
+ */
 const MODES = [
-  { degree: 0, mode: 'major', label: (n) => `${n} major` },
-  { degree: 9, mode: 'minor', label: (n) => `${n} minor` },
-  { degree: 7, mode: 'Mixolydian', label: (n) => `${n} Mixolydian` },
-  { degree: 2, mode: 'Dorian', label: (n) => `${n} Dorian` },
+  { degree: 0, mode: 'major', prior: 1.00, label: (n) => `${n} major` },
+  { degree: 9, mode: 'minor', prior: 0.96, label: (n) => `${n} minor` },
+  { degree: 7, mode: 'Mixolydian', prior: 0.53, label: (n) => `${n} Mixolydian` },
+  { degree: 2, mode: 'Dorian', prior: 0.51, label: (n) => `${n} Dorian` },
 ];
+
+/** The relative major or minor of a modal reading: same notes, likelier name. */
+const RELATIVE_OF = { Mixolydian: 'major', Dorian: 'minor' };
 
 // ---------------------------------------------------------------- constants
 
@@ -337,7 +379,7 @@ export function noteCollection(chroma) {
  * are identical; a bass line sitting on A and a final chord of A minor are not.
  */
 function rankCentres(collection, { full, bassChroma, ending }) {
-  const candidates = MODES.map(({ degree, mode, label }) => {
+  const candidates = MODES.map(({ degree, mode, prior, label }) => {
     const tonic = (collection.root + degree) % 12;
     const name = label(mode === 'minor' ? MINOR_NAMES[tonic] : MAJOR_NAMES[tonic]);
     const evidence = {
@@ -345,10 +387,16 @@ function rankCentres(collection, { full, bassChroma, ending }) {
       bass: bassChroma ? bassChroma[tonic] : 0,
       ending: ending ? ending[tonic] : 0,
     };
-    // Weighted toward the bass, which is the strongest single indicator of
-    // where home is and the one a plain chroma throws away.
-    const score = evidence.overall * 0.35 + evidence.bass * 0.45 + evidence.ending * 0.20;
-    return { tonic, mode, name, score, evidence };
+    /*
+     * Weighted toward the bass, which is the strongest single indicator of
+     * where home is and the one a plain chroma throws away.
+     *
+     * `overall` is deliberately the smallest of the three. It is the piece of
+     * evidence most biased toward the dominant — see the note on MODES — so
+     * leaning on it is what produced the Mixolydian problem in the first place.
+     */
+    const measured = evidence.overall * 0.25 + evidence.bass * 0.45 + evidence.ending * 0.30;
+    return { tonic, mode, name, prior, measured, score: measured * prior, evidence };
   });
 
   candidates.sort((a, b) => b.score - a.score);
@@ -419,7 +467,7 @@ export function keyFromChromagram(cg) {
   });
 
   const winner = candidates[0];
-  const alternatives = candidates.slice(1).filter((c) => c.closeness >= 1 - AMBIGUOUS_WITHIN);
+  const alternatives = withRelative(winner, candidates);
   const sections = analyseSections(cg);
   const settled = sections.filter((s) => s.name);
   const agreement = settled.length
@@ -471,7 +519,7 @@ export function keyFromChromagram(cg) {
     ambiguous: alternatives.length > 0,
 
     confidence: coherent
-      ? gradeConfidence(collection.concentration, agreement, alternatives.length)
+      ? gradeConfidence(collection.concentration, agreement, alternatives.length, winner.mode)
       : 'low',
     agreement,
 
@@ -595,7 +643,37 @@ function signatureOf(root) {
   };
 }
 
-function gradeConfidence(concentration, agreement, alternativeCount) {
+/**
+ * The alternatives worth naming beside the winner.
+ *
+ * Close-scoring readings, plus one that is always named: when a modal reading
+ * wins, its relative major or minor goes in the list whether it scored close
+ * or not.
+ *
+ * That last rule is not politeness. A C major vamp that stops on the dominant
+ * and a genuine G Mixolydian vamp measure within 0.1% of each other — the
+ * evidence that would separate them is functional, not present in a
+ * chromagram. Since the modal reading is by far the rarer of the two in
+ * popular music, naming a Mixolydian key without naming its relative major
+ * beside it states as settled the less likely of two readings the analysis
+ * cannot actually tell apart.
+ */
+function withRelative(winner, candidates) {
+  const close = candidates.slice(1).filter((c) => c.closeness >= 1 - AMBIGUOUS_WITHIN);
+  const relativeMode = RELATIVE_OF[winner.mode];
+  if (!relativeMode) return close;
+  if (close.some((c) => c.mode === relativeMode)) return close;
+  const relative = candidates.find((c) => c.mode === relativeMode);
+  return relative ? [relative, ...close] : close;
+}
+
+function gradeConfidence(concentration, agreement, alternativeCount, mode = null) {
+  /*
+   * A modal reading is never high confidence. Whatever the notes do, telling
+   * G Mixolydian from C major is a question about which note functions as
+   * home, and that distinction does not survive into a chromagram at all.
+   */
+  if (RELATIVE_OF[mode]) return concentration >= HIGH_CONCENTRATION ? 'medium' : 'low';
   // An ambiguous centre is never high confidence, however clear the notes are:
   // the signature being certain says nothing about which note is home.
   if (alternativeCount > 0) return concentration >= HIGH_CONCENTRATION ? 'medium' : 'low';
@@ -613,6 +691,14 @@ function limitsFor(winner, alternatives, settled, agreement, coherent = true) {
     'This key was worked out from the audio. It is not a value stored in the file.',
     'Which notes are being used is the part this can establish well. Which of them is home is a judgement about emphasis, and much harder to read from a recording.',
   ];
+  if (RELATIVE_OF[winner.mode]) {
+    const relative = alternatives.find((a) => a.mode === RELATIVE_OF[winner.mode]);
+    limits.push(
+      `A ${winner.mode} reading usually means the music leaned on its fifth rather than its home note${
+        relative ? `, so ${relative.name} is the likelier answer` : ''
+      }. Modes are uncommon in popular music, and the difference between them and the ordinary major or minor is about which note feels like home — which is exactly the part a recording does not make plain.`,
+    );
+  }
   if (alternatives.length) {
     limits.push(`${[winner.name, ...alternatives.map((a) => a.name)].join(', ')} all use these same seven notes, and the evidence does not clearly separate them.`);
   }

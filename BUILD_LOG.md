@@ -839,3 +839,82 @@ rule to the same standard.
     build cannot be.
 
 **289 unit tests, 90 browser assertions, all passing.**
+
+---
+
+## The dominant is not home
+
+Chris, reading a report on one of his own tracks: *"Kingfisher likes to talk
+about G Mixolydian, but in standard popular music that would be rare."* He was
+right, and the reason turned out to be structural rather than a tuning slip.
+
+38. **The dominant is over-represented in every major key, so the detector
+    kept electing it.** G is the fifth of C, the root of V and the fifth of
+    iii. Measured on a textbook I-IV-V-I in C major, G carries MORE chroma
+    than C does - 28.0% against 23.0%. Music that resolves home survives this
+    because the ending gives the tonic away. Music that vamps, fades out or
+    simply stops on the V does not, and gets named as the Mixolydian mode of
+    its own fifth.
+
+    The reproduction was unambiguous: a progression built from C, G, F and G
+    triads came back **G Mixolydian at high confidence, with C major not even
+    offered as an alternative.**
+
+    This exact failure had been found once before, in the fixtures, and the
+    note in `key-fixtures.js` still describes it - *"three keys came back as
+    the Mixolydian mode of their own fifth"*. It was fixed by making the
+    fixtures resolve home. The detector was never fixed, and real records do
+    not all resolve. A fixture change had hidden a bug rather than removing it.
+
+39. **Two of the cases are genuinely indistinguishable, and that decided the
+    fix.** A C major vamp stopping on the dominant and a real G Mixolydian
+    vamp measure within 0.1% of each other on every piece of evidence a
+    chromagram carries. What separates them is harmonic function, which is not
+    in the signal. No amount of tuning separates what the evidence does not.
+
+    When the evidence cannot decide, what settles it is which reading is more
+    common - and in popular music major and minor outnumber the modes by more
+    than an order of magnitude. So the modes now carry a prior and must win
+    clearly rather than narrowly. The same move the tempo estimator already
+    makes with its 120 BPM perceptual prior, for the same reason.
+
+    The weight was swept, not guessed, and the window is narrow: above ~0.55
+    the bug survives; below ~0.52 a genuinely modal progression stops
+    surviving transposition, because resampling smears the chroma and the
+    prior tips it into the relative major. 0.53 sits in the middle. Worth
+    knowing that the lower bound comes from DEGRADED audio rather than real
+    music, so the practical window is probably wider than the measured one.
+
+40. **A modal answer now always names its relative, and is never called
+    high confidence.** Even where the mode is the better reading, C major is
+    named beside G Mixolydian - because stating the rarer of two readings the
+    analysis cannot separate, without naming the likelier one, is the kind of
+    confident wrong answer this app exists to avoid.
+
+41. **Three existing tests had to be rewritten, because they encoded the
+    symptom as the specification.** They asserted that a clean I-vi-IV-V
+    *should* read as ambiguous with G Mixolydian among its alternatives. That
+    was only ever true because of the bias. Their intent was sound, so they
+    were re-pointed at material that is genuinely ambiguous, and tests were
+    added for the case that was broken.
+
+### ISRC, and a tag that means something else
+
+42. **In RIFF, the four characters `ISRC` do not mean ISRC.** They mean
+    **Source** - where the material came from - and have done since long
+    before recording codes were common in files. A WAV whose INFO block reads
+    `ISRC=Recorded at Abbey Road` is correctly filled in.
+
+    So the resolver validates rather than reads. An ISRC has a fixed shape
+    (CC-XXX-YY-NNNNN), which turns a guess into a test: prose in that field is
+    refused, a real code in that same field is accepted, and a dedicated tag
+    elsewhere wins over it either way. The report says which field the code
+    came out of, because with one ambiguous source in the list that is worth
+    stating.
+
+    It now sits with the headline facts, in the batch table and in the CSV,
+    rather than inside a tag list - it is the identity of the recording, not a
+    detail about the file, and at delivery it is checked more than anything
+    else in the report.
+
+**299 unit tests, 90 browser assertions, all passing.**

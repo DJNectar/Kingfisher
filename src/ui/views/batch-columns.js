@@ -33,6 +33,12 @@ export const BATCH_COLUMNS = [
     sort: (r) => (r.file.name ? r.file.name.toLowerCase() : null),
   },
   {
+    key: 'isrc',
+    label: 'ISRC',
+    text: (r) => r.isrc?.formatted ?? UNKNOWN,
+    sort: (r) => r.isrc?.code ?? null,
+  },
+  {
     key: 'format',
     label: 'Format',
     text: (r) => r.format.codec ?? UNKNOWN,

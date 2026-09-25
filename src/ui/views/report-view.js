@@ -272,6 +272,14 @@ function factStrip(report) {
     facts.push(['Peak', null, 'not measured']);
   }
 
+  // The ISRC, where there is one. It sits with the headline facts rather than
+  // in a tag list because at delivery it is checked more often than anything
+  // else in the report - it is the identity of the recording, not a detail
+  // about the file.
+  if (report.isrc) {
+    facts.push(['ISRC', report.isrc.formatted, `from the ${report.isrc.where}`]);
+  }
+
   // Loudness and true peak. These are the two numbers a delivery engineer
   // looks for first, and neither can be read off the header — both cost a pass
   // over the samples, so they sit beside the peak rather than replacing it.

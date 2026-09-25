@@ -354,6 +354,16 @@ export const GLOSSARY = {
     ],
   },
 
+  isrc: {
+    title: 'ISRC',
+    lead: 'The twelve-character identity of one specific recording.',
+    body: [
+      'International Standard Recording Code. It is assigned once and stays with that recording for life, which is what lets a distributor, a collecting society and a royalty statement all mean the same thing by it \u2014 this exact recording, not a song with this title, and not a different master of it.',
+      'Written as CC-XXX-YY-NNNNN: country, registrant, year of reference, and the designation the registrant gave it.',
+      'Kingfisher reports one only where it looks like a real code. In a RIFF file the four characters ISRC label a different field entirely \u2014 Source, meaning where the material came from \u2014 so a WAV saying \u201crecorded at Abbey Road\u201d there is correctly filled in, and is not a recording code.',
+    ],
+  },
+
   // ---------------------------------------------------------- metadata
   'broadcast wave': {
     title: 'Broadcast Wave',

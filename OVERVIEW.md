@@ -172,6 +172,17 @@ sideways, because nobody publishes the true tempo of a live recording.
 What any particular platform wants is a target, and comparing a file to one
 would be judging it.
 
+### ISRC
+
+Where the file carries one, the recording's ISRC sits with the headline facts,
+in the batch table and in the CSV.
+
+It is validated rather than read. In a RIFF file the four characters `ISRC`
+label a different field entirely — **Source**, meaning where the material came
+from — so a WAV saying "recorded at Abbey Road" there is correctly filled in
+and is not a recording code. Since an ISRC has a fixed shape, checking it turns
+a guess into a test. The report says which field the code was found in.
+
 ### Tempo
 
 Every report carries a tempo, in two strictly separate halves:
