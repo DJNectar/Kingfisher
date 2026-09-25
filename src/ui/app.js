@@ -18,6 +18,7 @@ import { chooseDestination } from './views/destination.js';
 import { BlobByteSource } from '../core/bytes.js';
 import { inspectSource } from '../core/registry.js';
 import { PARSE_STATUS } from '../core/report.js';
+import { formatDbfs } from '../core/format.js';
 import * as L from '../store/library.js';
 import {
   createLibrary,
@@ -261,7 +262,17 @@ async function measureLevelsFor(report) {
   }
 
   render();
-  toast(`Levels measured: peak ${stats.peakDbfs.toFixed(2)} dBFS.`, 'success');
+  // The report is already on screen by this point; this is only the
+  // confirmation line. peakDbfs is null when nothing in the file could be
+  // measured - a decoder returning non-finite samples - and calling toFixed on
+  // it threw here, after a correct render, so the button reported failure for
+  // work that had actually succeeded. Say what was found either way.
+  toast(
+    stats.peakDbfs === null
+      ? 'Levels measured. No peak could be established; see the report.'
+      : `Levels measured: peak ${formatDbfs(stats.peakDbfs)}.`,
+    'success',
+  );
 }
 
 /** Measure every file in the current batch that can be decoded. */
