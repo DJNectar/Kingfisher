@@ -5,22 +5,45 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Kingfisher — audio file reporter</title>
 <link rel="stylesheet" href="src/ui/styles.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐦</text></svg>">
+<!-- The same bird as the Mac app's icon, drawn by packaging/make-icon.py. -->
+  <link rel="icon" type="image/png" href="src/ui/assets/kingfisher-128.png">
 </head>
 <body>
+
+<!--
+  Launch screen.
+
+  Deliberately has no JavaScript behind it. It runs on a fixed CSS timeline and
+  clears itself, so a script that fails to load or throws on the way up cannot
+  leave somebody staring at a bird forever. It is also pointer-events:none
+  throughout, which means the app underneath is live and clickable the whole
+  time it is fading - the splash covers the wait, it never causes one.
+-->
+<div class="splash" aria-hidden="true">
+  <div class="splash-inner">
+    <div class="splash-mark"></div>
+    <div class="splash-word">Kingfisher</div>
+    <svg class="splash-wave" viewBox="0 0 240 28" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <path d="M0 14 L8 14 L14 8 L20 20 L26 12 L32 16 L40 4 L46 24 L52 10 L58 18 L66 14 L74 6 L80 22 L86 11 L92 17 L100 2 L106 26 L112 9 L118 19 L126 14 L134 7 L140 21 L146 12 L152 16 L160 5 L166 23 L172 10 L178 18 L186 14 L194 9 L200 19 L206 13 L212 15 L220 11 L226 17 L234 14 L240 14"/>
+    </svg>
+    <div class="splash-sub">Reports what is in your audio files</div>
+  </div>
+</div>
 
 <header class="app-bar">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"></span>
     <div>
       <h1>Kingfisher</h1>
-      <p class="brand-sub">Reports what is in your audio files. Read-only.</p>
+      <p class="brand-sub">Reports what is in your audio files. Read-only.
+        <span class="build-stamp" id="build-stamp" title="Which copy of Kingfisher this is"></span>
+      </p>
     </div>
   </div>
 
   <nav class="tabs" role="tablist" aria-label="Main sections">
     <button class="tab" role="tab" data-view="inspect" aria-selected="true">Inspect</button>
-    <button class="tab" role="tab" data-view="clients" aria-selected="false">Clients</button>
+    <button class="tab" role="tab" data-view="clients" aria-selected="false">Projects</button>
     <button class="tab" role="tab" data-view="help" aria-selected="false">Help</button>
   </nav>
 </header>
@@ -50,12 +73,7 @@
         <button class="btn btn-primary" id="btn-pick-folder">Check a folder…</button>
         <span class="drop-hint" id="drop-hint">…or drag files and folders anywhere on this page</span>
       </div>
-      <div class="pick-target" id="pick-target">
-        <label for="log-project">Log results to</label>
-        <select id="log-project">
-          <option value="">Don't log — just show me</option>
-        </select>
-      </div>
+      <p class="pick-target" id="pick-target"></p>
     </div>
 
     <div class="progress" id="progress" hidden>
@@ -78,7 +96,7 @@
     </div>
   </section>
 
-  <!-- ============================================================ CLIENTS -->
+  <!-- =========================================================== PROJECTS -->
   <section class="view" id="view-clients" role="tabpanel" hidden>
     <div id="clients-content"></div>
   </section>

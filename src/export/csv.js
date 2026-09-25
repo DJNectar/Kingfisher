@@ -56,7 +56,10 @@ const COLUMNS = [
   ['Artist', (r) => anyTag(r, ['TPE1', 'TP1'], ['©ART'], ['ARTIST'], (m) => m.iff?.author ?? m.id3v1?.artist)],
   ['Album', (r) => anyTag(r, ['TALB', 'TAL'], ['©alb'], ['ALBUM'], (m) => m.id3v1?.album)],
   ['Track', (r) => anyTag(r, ['TRCK', 'TRK'], ['trkn'], ['TRACKNUMBER'], (m) => m.id3v1?.track)],
-  ['ISRC', (r) => anyTag(r, ['TSRC'], [], ['ISRC'], () => null)],
+  // Resolved and validated rather than read straight off a tag: in RIFF the
+  // four characters ISRC mean "Source", not a recording code.
+  ['ISRC', (r) => r.isrc?.formatted ?? null],
+  ['ISRC found in', (r) => r.isrc?.where ?? null],
   ['Gapless true length (s)', (r) => round(r.metadata.gapless?.trueSeconds, 6)],
   ['Encoded peak (dBFS)', (r) => dbfs(r.metadata.lame?.peakDbfs)],
   ['Audio MD5', (r) => r.metadata.flac?.md5],
@@ -79,6 +82,37 @@ const COLUMNS = [
   ['Level measurement source', (r) => (r.audio?.measured
     ? (r.audio.source === 'decoded' ? `decoded (${r.audio.decodedBy ?? 'browser'})` : "the file's own samples")
     : null)],
+
+  // Loudness. Integrated, range and true peak each get a column because each
+  // answers a different question, and a delivery log is exactly where someone
+  // sorts by one of them.
+  ['Integrated loudness (LUFS)', (r) => round(r.loudness?.measured ? r.loudness.integrated : null, 2)],
+  ['Loudness range (LU)', (r) => round(r.loudness?.measured ? r.loudness.range : null, 2)],
+  ['True peak (dBTP)', (r) => dbfs(r.loudness?.measured ? r.loudness.truePeak : null)],
+  ['Short-term max (LUFS)', (r) => round(r.loudness?.measured ? r.loudness.shortTermMax : null, 2)],
+  ['Momentary max (LUFS)', (r) => round(r.loudness?.measured ? r.loudness.momentaryMax : null, 2)],
+
+  // Tempo. The stated and the measured stay in separate columns on purpose: a
+  // spreadsheet is exactly where you would want to sort a delivery by the gap
+  // between what a file claims and what it turned out to be.
+  ['Stated BPM', (r) => r.tempo?.stated?.bpm],
+  ['Stated BPM source', (r) => r.tempo?.stated?.source],
+  ['Measured BPM', (r) => (r.tempo?.measured?.established ? round(r.tempo.measured.bpm, 2) : null)],
+  ['Tempo confidence', (r) => (r.tempo?.measured?.established ? r.tempo.measured.confidence : null)],
+  ['Tempo steady', (r) => (r.tempo?.measured?.established ? yesNo(r.tempo.measured.steady) : null)],
+  ['Tempo low BPM', (r) => round(r.tempo?.measured?.range?.min, 2)],
+  ['Tempo high BPM', (r) => round(r.tempo?.measured?.range?.max, 2)],
+
+  // Key. The note collection is the reliable half, so it gets its own column:
+  // sorting a delivery by key signature is more dependable than by tonic.
+  ['Key signature', (r) => (r.key?.established ? r.key.signature.name : null)],
+  ['Key notes', (r) => (r.key?.established ? r.key.signature.notes.join(' ') : null)],
+  ['Likely key', (r) => (r.key?.established ? r.key.name : null)],
+  ['Other keys, same notes', (r) => (r.key?.established && r.key.alternatives.length
+    ? r.key.alternatives.map((a) => a.name).join(' / ')
+    : null)],
+  ['Key confidence', (r) => (r.key?.established ? r.key.confidence : null)],
+  ['How tonal', (r) => (r.key?.established ? r.key.tonalStrength.label : null)],
 
   ['Observations', (r) => r.observations.length],
   ['Needs a look', (r) => r.observations.filter((o) => o.severity === 'attention').map((o) => o.title).join(' | ')],
@@ -119,6 +153,12 @@ export function historyToCsv(rowsIn) {
       put('Duration (h:mm:ss)', clock(s.durationSeconds));
       put('Codec', s.codec);
       put('Peak (dBFS)', dbfs(s.peakDbfs));
+      put('ISRC', s.isrc);
+      put('Integrated loudness (LUFS)', round(s.integratedLufs, 2));
+      put('Loudness range (LU)', round(s.loudnessRange, 2));
+      put('True peak (dBTP)', dbfs(s.truePeakDbtp));
+      put('Measured BPM', round(s.measuredBpm, 2));
+      put('Stated BPM', s.statedBpm);
       put('Origin flag', originFlagLabel(s.originFlag));
       put('Origin confidence', s.originConfidence);
       put('Origin headline', s.originHeadline);

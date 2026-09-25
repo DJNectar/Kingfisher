@@ -97,12 +97,21 @@ actual content.
 
 ---
 
+## Done since
+
+| Item | Where it landed |
+|---|---|
+| **LUFS / loudness measurement** | Done. ITU-R BS.1770-4 K-weighting derived per sample rate, 400 ms blocks at 75% overlap, both gates, and EBU Tech 3342 loudness range. Verified against the nine published EBU Tech 3341/3342 compliance cases rather than against itself. |
+| **True-peak (inter-sample) detection** | Done, at eight times oversampling rather than the standard's four — past four the limit is not the filter but how finely the reconstructed curve is sampled. Sample peak is still reported beside it, since the gap between the two is the finding. |
+| **Key detection** | Done, shaped around what it can actually answer: the note collection leads, the tonal centre follows as a guess, and every key sharing those notes is named. |
+
+---
+
 ## Deferred, with reasons
 
 | Item | Why not done |
 |---|---|
-| **LUFS / loudness measurement** | Needs K-weighting filters and gating. `bext` loudness fields are *read* where present, but measuring is real DSP and guessing would violate the app's core rule. Worth doing properly if delivery specs matter to you. |
-| **True-peak (inter-sample) detection** | Needs oversampling. Current peak is sample-peak and is labelled as such rather than implying more. |
+| **Key detection** | The companion to tempo, and the harder half: roughly 70–80% right on ordinary material, with relative major/minor confusion as the standing failure. Would need the same estimate-shaped presentation tempo got. |
 | **RIFX (big-endian RIFF)** | Detected and explicitly refused rather than misread. No reference file existed to verify against, and shipping unverified byte-order handling is how wrong numbers appear. |
 | **WMA, WavPack, Monkey's Audio, DSD** | Not common on a Mac music or post desk. The registry makes each a self-contained addition. |
 | **Sony Wave64 (`.w64`) and raw ADTS AAC (`.aac`)** | Both extensions are listed in the file picker but have no parser, so such a file is offered and then reported as unreadable. It fails cleanly with no invented values, so it is a cosmetic honesty issue rather than a correctness one. Left as-is by decision. |

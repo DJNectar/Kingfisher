@@ -31,6 +31,11 @@ import { cafParser } from './parsers/caf.js';
 import { oggParser } from './parsers/ogg.js';
 import { mp3Parser } from './parsers/mp3.js';
 import { scanAudio } from './audio/pcm.js';
+import { createOnsetStream, tempoFromOnsetSignal } from './audio/tempo.js';
+import { createChromaStream, keyFromChromagram } from './audio/key.js';
+import { createLoudnessStream } from './audio/loudness.js';
+import { findIsrc } from './metadata/isrc.js';
+import { statedTempo } from './audio/stated-tempo.js';
 import { runRules } from './qc/engine.js';
 import { analyseProvenance } from './provenance/provenance.js';
 import { createReport, addError, finalizeStatus } from './report.js';
@@ -111,18 +116,54 @@ export async function inspectSource(source, fileInfo = {}, options = {}) {
 
   const report = await parser.parse(source, fileInfo);
 
+  // What the file claims its tempo is. Read, like everything else here, and
+  // kept apart from anything worked out by listening.
+  report.tempo.stated = statedTempo(report);
+
   // Measure the signal only when the structure told us where and how.
   if (options.scanAudio !== false) {
+    // For uncompressed audio the tempo rides along with the level scan: the
+    // samples are being walked anyway, so the onset signal costs one more pass
+    // over numbers already in hand and the file never has to be decoded.
+    const analyse = options.detectTempo !== false && report.format.sampleRate;
+    const collector = analyse ? createOnsetStream(report.format.sampleRate) : null;
+    const chroma = analyse ? createChromaStream(report.format.sampleRate) : null;
+
+    // Loudness rides the same pass. It is not gated behind the tempo option:
+    // tempo is an opinion about the audio and can sensibly be turned off, while
+    // loudness is a measurement of it, and belongs with the levels.
+    const loudness = options.measureLoudness !== false
+      && report.format.sampleRate && report.format.channels
+      ? createLoudnessStream({
+        sampleRate: report.format.sampleRate,
+        channels: report.format.channels,
+        channelNames: report.format.layoutChannels,
+      })
+      : null;
+
     try {
-      report.audio = await scanAudio(source, report, { maxScanBytes: options.maxScanBytes });
+      report.audio = await scanAudio(source, report, {
+        maxScanBytes: options.maxScanBytes,
+        onsetCollector: collector,
+        chromaCollector: chroma,
+        loudnessCollector: loudness,
+      });
+      if (collector) report.tempo.measured = readTempo(collector);
+      if (chroma) report.key = readKey(chroma);
+      if (loudness) report.loudness = readLoudness(loudness);
     } catch (err) {
       report.parse.warnings.push({
         message: `The audio data could not be measured: ${err.message}. Level and silence readings are not reported for this file.`,
         context: null,
       });
       report.audio = null;
+      report.loudness = null;
     }
   }
+
+  // The recording's identity, pulled out of whichever tag scheme this format
+  // uses. Like the rules, it reads the finished report rather than the bytes.
+  report.isrc = findIsrc(report);
 
   // What the file says about its own origin. Runs before the rules so that a
   // rule can comment on it, and like the rules it reads the finished report
@@ -132,6 +173,47 @@ export async function inspectSource(source, fileInfo = {}, options = {}) {
   report.observations = runRules(report);
   finalizeStatus(report);
   return report;
+}
+
+/**
+ * Turn a finished onset collector into a tempo result, or into a plain reason
+ * there is not one. A missing tempo always says why: silence about it would
+ * look the same as a tempo of nothing.
+ */
+function readTempo(collector) {
+  const signal = collector.finish();
+  if (!signal) return null;
+  if (signal.abandoned) {
+    return { established: false, bpm: null, reason: signal.abandoned, range: null, limits: [] };
+  }
+  return tempoFromOnsetSignal(signal);
+}
+
+/** As readTempo, for loudness: a missing answer always says why. */
+function readLoudness(collector) {
+  const result = collector.finish();
+  if (!result) return null;
+  if (result.abandoned) {
+    return {
+      measured: false,
+      reason: result.abandoned,
+      integrated: null,
+      range: null,
+      truePeak: null,
+      limits: [],
+    };
+  }
+  return result;
+}
+
+/** As readTempo, for the key: a missing answer always says why. */
+function readKey(collector) {
+  const signal = collector.finish();
+  if (!signal) return null;
+  if (signal.abandoned) {
+    return { established: false, name: null, reason: signal.abandoned, alternatives: [], limits: [] };
+  }
+  return keyFromChromagram(signal);
 }
 
 /** Human description of unrecognised leading bytes, for the error message. */

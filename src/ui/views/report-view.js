@@ -8,9 +8,13 @@
  *   4. Everything else, collapsed: metadata, levels per channel, chunk map.
  */
 
-import { el, kv, section, table, toast } from '../dom.js';
+import { el, kv, section, table, toast, labelWithInfo, clear } from '../dom.js';
+import { BATCH_COLUMNS, sortReports, findingCounts } from './batch-columns.js';
 import { decodeAvailability } from '../../core/audio/decode.js';
 import { PARSE_STATUS } from '../../core/report.js';
+// Imported rather than reimplemented, so the wording on screen is identical to
+// the wording in the exported report.
+import { codecText, bitDepthText } from '../../export/render.js';
 import { SEVERITY_LABELS } from '../../core/qc/severity.js';
 import {
   formatBytes,
@@ -20,6 +24,7 @@ import {
   formatBitDepth,
   formatChannels,
   formatDbfs,
+  formatSignedDb,
   formatTimestamp,
   UNKNOWN,
 } from '../../core/format.js';
@@ -31,7 +36,7 @@ export function renderReportCard(report, {
   collapsedByDefault = false,
   onMeasureLevels = null,
 } = {}) {
-  const card = el('div', { class: 'report' });
+  const card = el('div', { class: 'report', id: `report-${report.id}` });
 
   // ---- head
   const badges = el('div', { class: 'btn-row' }, severityBadges(report));
@@ -48,11 +53,24 @@ export function renderReportCard(report, {
           ].filter(Boolean).join('  ·  '),
         }),
       ]),
-      badges,
+      el('div', { class: 'report-head-right' }, [
+        badges,
+        expandToggle(() => card),
+      ]),
     ]),
   );
 
   const body = el('div', { class: 'report-body' });
+
+  /**
+   * Whether detail sections start open.
+   *
+   * Collapsing keeps a long batch scannable, but it also means the screen can
+   * look like it holds less than the exported report does — which is confusing
+   * when the two are meant to be the same thing. So the choice is the user's,
+   * and it is remembered.
+   */
+  const expandAll = readExpandPreference(collapsedByDefault);
 
   // ---- 1. read result
   body.append(parseBanner(report));
@@ -65,9 +83,15 @@ export function renderReportCard(report, {
     body.append(observationList(report.observations));
 
     // ---- 4. detail
-    if (report.audio?.measured) body.append(levelsSection(report, collapsedByDefault));
+    if (report.audio?.measured) body.append(levelsSection(report, !expandAll));
     else body.append(measureOffer(report, onMeasureLevels));
-    const meta = metadataSections(report, collapsedByDefault);
+    const tempo = tempoSection(report, !expandAll);
+    if (tempo) body.append(tempo);
+    const key = keySection(report, !expandAll);
+    if (key) body.append(key);
+    const loudness = loudnessSection(report, !expandAll);
+    if (loudness) body.append(loudness);
+    const meta = metadataSections(report, !expandAll);
     for (const s of meta) body.append(s);
     body.append(chunkSection(report));
   } else {
@@ -75,10 +99,79 @@ export function renderReportCard(report, {
     if (report.chunks.length) body.append(chunkSection(report));
   }
 
+  // Apply the remembered preference to every section, including the ones whose
+  // own default differs, so the control means what it says.
+  if (expandAll) {
+    for (const details of body.querySelectorAll('details.detail-section')) details.open = true;
+  }
   card.append(body);
 
   if (onExport) card.append(exportBar(onExport));
   return card;
+}
+
+const EXPAND_KEY = 'kingfisher.expandSections';
+
+/**
+ * Read the remembered expand preference.
+ *
+ * localStorage can be unavailable or throw (a private window, blocked site
+ * data), so a failure falls back to the caller's default rather than breaking
+ * the render.
+ */
+function readExpandPreference(collapsedByDefault) {
+  try {
+    const stored = localStorage.getItem(EXPAND_KEY);
+    if (stored === 'all') return true;
+    if (stored === 'none') return false;
+  } catch {
+    // Fall through to the default.
+  }
+  return !collapsedByDefault;
+}
+
+function writeExpandPreference(expand) {
+  try {
+    localStorage.setItem(EXPAND_KEY, expand ? 'all' : 'none');
+  } catch {
+    // A remembered preference is a convenience, not a requirement.
+  }
+}
+
+/**
+ * Expand or collapse every detail section on this report, and remember which
+ * the user chose so the next file opens the same way.
+ */
+function expandToggle(getCard) {
+  const button = el('button', { class: 'btn btn-small btn-ghost', text: 'Expand all' });
+
+  const sync = () => {
+    const card = getCard();
+    const sections = [...card.querySelectorAll('details.detail-section')];
+    const anyClosed = sections.some((d) => !d.open);
+    button.textContent = anyClosed ? 'Expand all' : 'Collapse all';
+  };
+
+  button.addEventListener('click', () => {
+    const card = getCard();
+    const sections = [...card.querySelectorAll('details.detail-section')];
+    const expand = sections.some((d) => !d.open);
+    for (const d of sections) d.open = expand;
+    writeExpandPreference(expand);
+    sync();
+  });
+
+  // Reflect the state the card actually rendered in, and keep up if the user
+  // opens or closes a section by hand.
+  setTimeout(() => {
+    sync();
+    const card = getCard();
+    for (const d of card.querySelectorAll('details.detail-section')) {
+      d.addEventListener('toggle', sync);
+    }
+  }, 0);
+
+  return button;
 }
 
 function severityBadges(report) {
@@ -107,8 +200,15 @@ function parseBanner(report) {
   const banner = el('div', { class: `parse-banner ${status}` });
 
   if (status === PARSE_STATUS.OK) {
-    // Warnings can exist even on a fully-read file; show them if so.
-    if (!report.parse.warnings.length) return banner; // .ok is display:none
+    if (!report.parse.warnings.length) {
+      // Say so rather than showing nothing. A silent pass leaves the reader
+      // unsure whether the file was checked or the check was skipped — and the
+      // exported report states it plainly, so the screen should too.
+      banner.className = 'parse-banner ok-shown';
+      banner.append(el('h4', { text: 'Fully read' }));
+      banner.append(el('p', { style: 'margin:0', text: 'Every part of this file was understood.' }));
+      return banner;
+    }
     banner.className = 'parse-banner partial';
     banner.append(el('h4', { text: 'Read in full, with notes' }));
   } else if (status === PARSE_STATUS.PARTIAL) {
@@ -172,17 +272,181 @@ function factStrip(report) {
     facts.push(['Peak', null, 'not measured']);
   }
 
+  // The ISRC, where there is one. It sits with the headline facts rather than
+  // in a tag list because at delivery it is checked more often than anything
+  // else in the report - it is the identity of the recording, not a detail
+  // about the file.
+  if (report.isrc) {
+    facts.push(['ISRC', report.isrc.formatted, `from the ${report.isrc.where}`]);
+  }
+
+  // Loudness and true peak. These are the two numbers a delivery engineer
+  // looks for first, and neither can be read off the header — both cost a pass
+  // over the samples, so they sit beside the peak rather than replacing it.
+  const loud = report.loudness;
+  if (loud?.measured && loud.integrated !== null) {
+    facts.push([
+      'Loudness',
+      loud.integrated.toFixed(1),
+      loud.range !== null
+        ? `LUFS integrated \u00b7 ${loud.range.toFixed(1)} LU range`
+        : 'LUFS integrated',
+    ]);
+  } else if (loud?.measured) {
+    facts.push(['Loudness', null, 'not established']);
+  }
+  if (loud?.measured && Number.isFinite(loud.truePeak)) {
+    facts.push([
+      'True peak',
+      formatSignedDb(loud.truePeak, 2),
+      `dBTP${loud.truePeak > 0 ? ' \u00b7 above full scale' : ''}`,
+    ]);
+  }
+
+  // The tempo tile, and the one place in this strip where the note under the
+  // number is doing real work. Every other tile holds something read out of the
+  // file; this one holds an estimate, and sitting in the same row it would
+  // otherwise be taken for the same kind of fact. So it always says "estimated"
+  // and how much to trust it, and the section below carries the rest.
+  const tempo = report.tempo?.measured;
+  const stated = report.tempo?.stated;
+  if (tempo?.established) {
+    facts.push([
+      'Tempo',
+      `${tempo.bpm.toFixed(tempo.bpm < 100 ? 1 : 0)}`,
+      `BPM estimated, ${tempo.confidence} confidence${tempo.steady ? '' : ' \u00b7 moves'}`,
+    ]);
+  } else if (stated) {
+    // Nothing could be measured, but the file makes a claim. Show the claim and
+    // label it as one.
+    facts.push(['Tempo', `${stated.bpm}`, 'BPM stated in the file']);
+  } else if (tempo) {
+    facts.push(['Tempo', null, 'not established']);
+  }
+
+  // The key tile leads with the NOTES, not the centre. Measured on a real
+  // recording the note collection follows a transposition 8 times in 10 and
+  // the centre 1 time in 10, so putting the centre in the headline position
+  // would be giving the least reliable half of the answer top billing.
+  const key = report.key;
+  if (key?.established) {
+    facts.push([
+      'Key',
+      key.name,
+      key.ambiguous
+        ? `or ${key.alternatives.map((a) => a.name).join(' / ')} \u2014 same notes`
+        : `${key.signature.name} \u00b7 ${key.tonalStrength.label}`,
+    ]);
+  } else if (key) {
+    facts.push(['Key', null, 'not established']);
+  }
+
   return el(
     'div',
     { class: 'facts' },
     facts.map(([label, value, note]) =>
       el('div', { class: 'fact' }, [
-        el('div', { class: 'fact-label', text: label }),
+        el('div', { class: 'fact-label' }, labelWithInfo(label)),
         el('div', { class: `fact-value${value ? '' : ' unknown'}`, text: value ?? UNKNOWN }),
         note ? el('div', { class: 'fact-note', text: note }) : null,
       ]),
     ),
   );
+}
+
+
+// ------------------------------------------------------------ batch table
+
+/**
+ * One row per file, above the report cards.
+ *
+ * WHY. A batch of two hundred files rendered as two hundred cards is a
+ * scroll, not a view. The question somebody actually has at intake is
+ * comparative - which of these is the loudest, which are 44.1 rather than 48,
+ * which have something worth looking at - and a comparison needs a table.
+ *
+ * The cards stay. This sits above them and jumps to one when a row is
+ * clicked, so the table answers "which" and the card answers "why".
+ */
+/**
+ * @param {object[]} reports
+ * @param {{onPick?: (report: object) => void}} options
+ */
+const CELL_NODE = {
+  findings: (report) => {
+    const { attention, notice } = findingCounts(report);
+    if (!attention && !notice) return el('span', { class: 'batch-clear', text: '\u2014' });
+    return el('span', { class: 'batch-findings' }, [
+      attention ? el('span', { class: 'batch-count attention', text: String(attention) }) : null,
+      notice ? el('span', { class: 'batch-count notice', text: String(notice) }) : null,
+    ]);
+  },
+};
+
+export function renderBatchTable(reports, { onPick = null } = {}) {
+  // null means the order they were checked in, which is the order on disk and
+  // a meaningful default: it is what the folder looks like.
+  let sortKey = null;
+  let direction = 'asc';
+
+  const wrapper = el('div', { class: 'batch-table' });
+  const scroll = el('div', { class: 'table-scroll' });
+  const table = el('table', { class: 'data batch' });
+  const thead = el('thead');
+  const tbody = el('tbody');
+  table.append(thead, tbody);
+  scroll.append(table);
+
+  function draw() {
+    clear(thead);
+    clear(tbody);
+
+    thead.append(el('tr', {}, BATCH_COLUMNS.map((column) => {
+      const active = sortKey === column.key;
+      const th = el('th', {
+        class: column.num ? 'num' : null,
+        'aria-sort': active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none',
+      });
+      th.append(el('button', {
+        type: 'button',
+        class: `batch-sort${active ? ' active' : ''}`,
+        text: column.label,
+        'aria-label': `Sort by ${column.label}`,
+        onclick: () => {
+          if (sortKey === column.key) direction = direction === 'asc' ? 'desc' : 'asc';
+          else { sortKey = column.key; direction = column.num ? 'desc' : 'asc'; }
+          draw();
+        },
+      }));
+      return th;
+    })));
+
+    const rows = sortReports(reports, sortKey, direction);
+
+    for (const report of rows) {
+      const tr = el('tr', { class: onPick ? 'clickable' : null });
+      for (const col of BATCH_COLUMNS) {
+        const td = el('td', { class: col.num ? 'num' : null });
+        const node = CELL_NODE[col.key];
+        if (node) td.append(node(report));
+        else {
+          const value = col.text(report);
+          td.append(el('span', { class: value === UNKNOWN ? 'unknown' : null, text: value }));
+        }
+        tr.append(td);
+      }
+      if (onPick) tr.addEventListener('click', () => onPick(report));
+      tbody.append(tr);
+    }
+  }
+
+  draw();
+  wrapper.append(scroll);
+  wrapper.append(el('p', {
+    class: 'muted batch-hint',
+    text: 'Click a column to sort; click a row to jump to that file. A dash is a value that could not be established \u2014 those sort to the bottom either way. A BPM marked * is stated in the file rather than measured.',
+  }));
+  return wrapper;
 }
 
 export function observationList(observations) {
@@ -259,6 +523,244 @@ function measureOffer(report, onMeasureLevels) {
   return wrap;
 }
 
+/**
+ * The tempo section: what the file says, what the audio turned out to be, and
+ * exactly how much weight either deserves.
+ *
+ * Laid out so the two can never be confused for one another. A stated tempo is
+ * a claim someone typed; a measured one is this app's reading of the audio.
+ * They sit in separate rows with their sources named, and where they disagree
+ * the disagreement is shown rather than resolved — a tag that says 100 over a
+ * performance at 128 is a fact about the file worth seeing.
+ */
+/**
+ * The loudness section.
+ *
+ * Integrated loudness leads because it is the number everything else is
+ * discussed relative to. True peak sits directly under it with the sample peak
+ * beside it, because the gap between those two is the whole reason true peak is
+ * worth measuring, and showing one without the other hides it.
+ *
+ * No target appears anywhere here, and none is implied. The section reports
+ * what the file measures and stops.
+ */
+function loudnessSection(report, collapsed) {
+  const l = report.loudness;
+  if (!l) return null;
+
+  const body = el('div', {});
+
+  if (!l.measured) {
+    body.append(kv([['Loudness', 'not measured'], ['Why not', l.reason]]));
+    return section('Loudness', body, { open: !collapsed });
+  }
+
+  const rows = [];
+  rows.push([
+    'Integrated',
+    l.integrated !== null ? `${l.integrated.toFixed(2)} LUFS` : 'not established',
+  ]);
+  if (l.integrated === null && l.integratedReason) rows.push(['Why not', l.integratedReason]);
+
+  rows.push([
+    'Loudness range',
+    l.range !== null ? `${l.range.toFixed(2)} LU` : 'not established',
+  ]);
+  if (l.range === null && l.rangeReason) rows.push(['Why not', l.rangeReason]);
+
+  if (l.shortTermMax !== null && Number.isFinite(l.shortTermMax)) {
+    rows.push(['Loudest 3 seconds', `${l.shortTermMax.toFixed(2)} LUFS`]);
+  }
+  if (l.momentaryMax !== null && Number.isFinite(l.momentaryMax)) {
+    rows.push(['Loudest 400 ms', `${l.momentaryMax.toFixed(2)} LUFS`]);
+  }
+
+  rows.push(['True peak', `${formatSignedDb(l.truePeak, 2)} dBTP`]);
+  rows.push(['Sample peak', `${formatSignedDb(l.samplePeak, 2)} dBFS`]);
+
+  if (l.gatedBlocks !== null) {
+    rows.push([
+      'Blocks averaged',
+      `${l.gatedBlocks.toLocaleString('en-US')} of ${l.totalBlocks.toLocaleString('en-US')} \u2014 the rest fell below the gate and were left out, as the standard requires`,
+    ]);
+  }
+  rows.push(['How', `${l.standard} K-weighting, reconstructed at ${l.overSampling}\u00d7 for the peak`]);
+
+  body.append(kv(rows));
+
+  // The gap between the stored samples and the reconstructed waveform. Where
+  // it is wide, it is the finding, so it gets said in words as well as numbers.
+  if (l.truePeakExceedsSample) {
+    const gap = l.truePeak - l.samplePeak;
+    body.append(el('p', {
+      class: 'muted',
+      text: `The reconstructed waveform runs ${gap.toFixed(2)} dB above the loudest stored sample. That gap lives between the samples, so nothing in the file's own values shows it.`,
+    }));
+  }
+
+  if (l.channels.length > 1) {
+    body.append(el('h4', { text: 'Peaks per channel' }));
+    body.append(table(
+      ['Channel', { label: 'True peak (dBTP)', class: 'num' }, { label: 'Sample peak (dBFS)', class: 'num' }],
+      l.channels.map((c) => [
+        c.name,
+        formatSignedDb(c.truePeakDbtp, 2),
+        formatSignedDb(c.samplePeakDbfs, 2),
+      ]),
+    ));
+  }
+
+  if (l.limits?.length) {
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'What this measurement covers. ' }),
+      l.limits.join(' '),
+    ]));
+  }
+
+  return section('Loudness', body, { open: !collapsed });
+}
+
+function tempoSection(report, collapsed) {
+  const measured = report.tempo?.measured;
+  const stated = report.tempo?.stated;
+  if (!measured && !stated) return null;
+
+  const body = el('div', {});
+  const rows = [];
+
+  if (stated) {
+    rows.push(['Stated in the file', `${stated.bpm} BPM`]);
+    rows.push(['Where it says so', stated.source]);
+  }
+
+  if (measured?.established) {
+    rows.push(['Measured from the audio', `${measured.bpm.toFixed(2)} BPM`]);
+    rows.push(['Confidence', measured.confidence]);
+    rows.push([
+      'Through the piece',
+      measured.range
+        ? `moves between ${measured.range.min.toFixed(1)} and ${measured.range.max.toFixed(1)} BPM`
+        : 'steady \u2014 no movement beyond what this method can resolve',
+    ]);
+    if (measured.alternativeFeel) {
+      rows.push([
+        `Or ${measured.alternativeFeel.name}`,
+        `${measured.alternativeFeel.bpm.toFixed(1)} BPM \u2014 ${measured.alternativeFeel.note}`,
+      ]);
+    }
+    rows.push(['Precision', `\u00b1${measured.resolutionBpm.toFixed(2)} BPM at this tempo`]);
+    rows.push(['How', measured.method]);
+  } else if (measured) {
+    rows.push(['Measured from the audio', 'not established']);
+    rows.push(['Why not', measured.reason]);
+  }
+
+  body.append(kv(rows));
+
+  // Where both exist and disagree, say so plainly. Not as a fault — the file
+  // may be right and the performance loose, or the tag may simply be wrong —
+  // but a reader comparing two numbers should not have to do the subtraction.
+  if (stated && measured?.established) {
+    const difference = Math.abs(measured.bpm - stated.bpm);
+    if (difference > Math.max(1, measured.resolutionBpm)) {
+      body.append(el('p', {
+        class: 'muted',
+        text: `The file states ${stated.bpm} BPM; the audio measures ${measured.bpm.toFixed(1)}, a difference of ${difference.toFixed(1)}. Both are reported as found. Which one is right is not something this app can settle.`,
+      }));
+    }
+  }
+
+  if (measured?.established && measured.windows?.length > 2) {
+    const reliable = measured.windows.filter((w) => w.reliable);
+    if (reliable.length > 2) {
+      body.append(el('h4', { text: `Tempo through the piece, every ${measured.windowSeconds} seconds` }));
+      body.append(table(
+        ['At', { label: 'BPM', class: 'num' }],
+        // Whole seconds: a window boundary is an analysis artefact, and
+        // printing it to the millisecond implies a precision it does not have.
+        reliable.map((w) => [clockMinutes(w.startSeconds), w.bpm.toFixed(1)]),
+      ));
+    }
+  }
+
+  if (measured?.limits?.length) {
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'What this number is, and is not. ' }),
+      measured.limits.join(' '),
+    ]));
+  }
+
+  return section('Tempo', body, { open: !collapsed });
+}
+
+/**
+ * The key section, laid out around what the analysis can and cannot do.
+ *
+ * Which notes are being used comes first and is stated plainly. Which of them
+ * is home comes second, as a best guess, with every key sharing those notes
+ * named beside it — because C major and A minor contain exactly the same seven
+ * notes, and so do G Mixolydian and D Dorian.
+ */
+function keySection(report, collapsed) {
+  const key = report.key;
+  if (!key) return null;
+
+  const body = el('div', {});
+
+  if (!key.established) {
+    body.append(kv([['Key', 'not established'], ['Why not', key.reason]]));
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'Not every piece has one. ' }),
+      'Percussion, atonal material and heavily processed sound have no key to find, '
+      + 'and saying so is more use than a name you cannot rely on.',
+    ]));
+    return section('Key', body, { open: !collapsed });
+  }
+
+  body.append(kv([
+    ['Notes used', `${key.signature.notes.join(' ')}  (${key.signature.name})`],
+    ['Likely key', key.name],
+    // undefined rather than null: kv() renders a null as a dash, which would
+    // put "—" against questions that simply do not apply to this file.
+    ['Or equally', key.ambiguous
+      ? `${key.alternatives.map((a) => a.name).join(', ')} \u2014 the same seven notes`
+      : undefined],
+    ['Confidence', key.confidence],
+    ['Through the piece', key.sections.length >= 2
+      ? (key.steady ? 'settles in one place throughout' : 'moves between sections')
+      : undefined],
+    ['Starts in', key.sections.length >= 2 ? key.startsIn : undefined],
+    ['Ends in', key.sections.length >= 2 ? key.endsIn : undefined],
+    ['How tonal', `${key.tonalStrength.label} \u2014 ${key.tonalStrength.detail}`],
+    ['Pitched energy on those notes', `${(key.concentration * 100).toFixed(0)}% (${Math.round(100 * (7 / 12))}% would land there by chance)`],
+    ['How', key.method],
+  ]));
+
+  const named = key.sections.filter((s) => s.name);
+  if (named.length >= 2 && !key.steady) {
+    body.append(el('h4', { text: `Key through the piece, every ${key.sectionSeconds} seconds` }));
+    body.append(table(
+      ['At', 'Key'],
+      named.map((s) => [clockMinutes(s.startSeconds), s.name]),
+    ));
+  }
+
+  if (key.limits?.length) {
+    body.append(el('div', { class: 'provenance-caveat' }, [
+      el('strong', { text: 'What this is, and is not. ' }),
+      key.limits.join(' '),
+    ]));
+  }
+
+  return section('Key', body, { open: !collapsed });
+}
+
+/** m:ss, for marking a position in a piece rather than timing an edit. */
+function clockMinutes(seconds) {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
 function levelsSection(report, collapsed) {
   const a = report.audio;
   const coverage = a.source === 'decoded'
@@ -306,19 +808,33 @@ function metadataSections(report, collapsed) {
 
   // A "technical details" section carrying the fields that do not fit the
   // headline tiles, so nothing the parser established is hidden.
+  // Mirrors the FORMAT section of the exported report. The headline tiles show
+  // the six numbers at a glance; this is the full set, so nothing that reaches
+  // the PDF is absent from the screen.
   const technical = [
-    ['Container', report.container.kind],
-    ['Codec', f.codec],
+    ['File size', formatBytes(report.file.size)],
+    ['Container', [report.container.kind, report.container.form].filter(Boolean).join(' / ')],
+    ['Codec', codecText(f)],
     ['Profile', f.profile],
     ['Lossless', f.lossless === null ? null : f.lossless ? 'yes' : 'no'],
-    ['Bitrate', f.bitrate ? `${Math.round(f.bitrate / 1000)} kbps (calculated from the audio data)` : null],
-    ['Bitrate mode', f.bitrateMode],
+    ['Sample rate', formatSampleRate(f.sampleRate)],
+    ['Bit depth', bitDepthText(f)],
+    ['Valid bits', f.validBits && f.validBits !== f.bitDepth ? `${f.validBits} of ${f.bitDepth}` : null],
+    ['Channels', formatChannels(f.channels, f.layoutName)],
+    ['Channel layout', f.layoutChannels?.length
+      ? `${f.layoutChannels.join(', ')}${f.layoutSource ? ` (${f.layoutSource}${f.channelMaskHex ? ` ${f.channelMaskHex}` : ''})` : ''}`
+      : null],
+    ['Bitrate', f.bitrate ? `${Math.round(f.bitrate / 1000)} kbps${f.bitrateMode ? `, ${f.bitrateMode}` : ''} (calculated from the audio data)` : null],
     ['Encoder', f.encoder],
     ['Block align', f.blockAlign ? `${f.blockAlign} bytes` : null],
     ['Byte rate', f.byteRate ? `${f.byteRate.toLocaleString('en-US')} bytes/s` : null],
     ['Byte order', f.sampleEndianness === 'big' ? 'big-endian' : f.sampleEndianness === 'little' ? 'little-endian' : null],
+    ['Duration', report.duration.seconds !== null
+      ? `${formatDuration(report.duration.seconds)}${report.duration.frames ? ` (${report.duration.frames.toLocaleString('en-US')} sample frames)` : ''}`
+      : null],
     ['Duration source', report.duration.source],
-  ].filter(([, v]) => v !== null && v !== undefined);
+    ['Duration exact', report.duration.exact === false ? 'no — approximate' : report.duration.exact === true ? 'yes' : null],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
 
   if (technical.length) out.push(section('Technical details', kv(technical), { open: false }));
 

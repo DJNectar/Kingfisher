@@ -78,6 +78,17 @@ export function createLibrary() {
 
 export const APP_VERSION = '1.0.0';
 
+/**
+ * The day this copy was packaged.
+ *
+ * Shown in the header and written into exports so the version running can
+ * always be identified. Without it there is no way to tell a current build
+ * from a stale folder or a browser serving cached modules — which is exactly
+ * the confusion that prompted adding it, after a new build appeared to be
+ * missing features it plainly contained.
+ */
+export const BUILD_DATE = '2026-09-19';
+
 /** Thrown for a file we can identify but must not load. */
 export class LibraryFormatError extends Error {}
 

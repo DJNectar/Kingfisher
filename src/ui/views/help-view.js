@@ -33,6 +33,9 @@ export function renderHelp(host) {
         ['provenance', 'Where a file came from'],
         ['checking', 'Checking a file or folder'],
         ['reading', 'Reading the results'],
+        ['loudness', 'Loudness and true peak'],
+        ['tempo', 'Tempo'],
+        ['key', 'Key'],
         ['clients', 'Clients and projects'],
         ['todo', 'The to-do list'],
         ['saving', 'Saving your work'],
@@ -50,6 +53,8 @@ export function renderHelp(host) {
         'The channel layout — which speaker each channel is meant for, when the file says so. When it does not say, Kingfisher tells you it is assuming the usual order rather than pretending to know.',
         'Embedded metadata: the Broadcast Wave (bext) description, originator, date and timecode; iXML from field recorders including scene, take and track names; and the older INFO tags like title and artist.',
         'Measured levels: peak and RMS for the file and for each channel, where the loudest moment is, and whether any channel is silent.',
+        'Loudness in LUFS, loudness range in LU and true peak in dBTP \u2014 the numbers delivery specs are written in, and the one reading that can show a file going above full scale when none of its samples do.',
+        'When you check more than one file, a sortable table appears above the reports: one row per file, click a column to sort by it, click a row to jump to that file. A dash is something that could not be established, and those always sort to the bottom rather than counting as zero.',
         'A full list of every chunk in the file, including the ones Kingfisher does not decode — so you can see that nothing is being hidden from you.',
       ]),
       el('h4', { text: 'Which files it reads' }),
@@ -161,6 +166,44 @@ export function renderHelp(host) {
       el('p', { class: 'muted', text: 'In short: this section is a useful place to look, and never a verdict. It is here so you can see what a file claims, and decide for yourself what that is worth.' }),
 
       // ------------------------------------------------------------------
+      // ------------------------------------------------------------------
+      h3('loudness', 'Loudness and true peak'),
+      el('p', { text: 'Peak tells you whether a file will clip. It tells you very little about how loud it sounds \u2014 two masters with identical peaks can be eight decibels apart to the ear. Loudness is the measurement that answers that question, and it is what every delivery spec in music, broadcast and podcasting is actually written in.' }),
+      ul([
+        el('span', {}, [el('strong', { text: 'Integrated loudness, in LUFS' }), ' \u2014 the whole file as one number. Quiet passages are gated out of the average, so a track with a long intro measures as the performance rather than as the silence around it.']),
+        el('span', {}, [el('strong', { text: 'Loudness range, in LU' }), ' \u2014 the distance between the loud parts and the quiet parts of the same piece. A heavily compressed master reads low, a dynamic one reads high. It is a description, not a score.']),
+        el('span', {}, [el('strong', { text: 'True peak, in dBTP' }), ' \u2014 where the waveform actually goes between the samples.']),
+        el('span', {}, [el('strong', { text: 'Loudest 400 milliseconds and loudest 3 seconds' }), ' \u2014 the short-window peaks of loudness, for finding the hottest moment rather than the average.']),
+      ]),
+      el('p', {}, [
+        el('strong', { text: 'Why true peak is not the same as peak. ' }),
+        'Between any two samples the signal is not a straight line. It is a curve, and the converter in a set of speakers reconstructs that curve when it plays the file. The curve can rise above both of the samples it sits between \u2014 so a file whose every single sample is below full scale can still push playback past it. Nothing in the file\u2019s own numbers shows this. Kingfisher rebuilds the curve at eight times the file\u2019s sample rate and reports where it actually goes, with the sample peak shown next to it so you can see the gap.',
+      ]),
+      el('p', {}, [
+        el('strong', { text: 'There is no target here, on purpose. ' }),
+        'Kingfisher will tell you a file is -9.4 LUFS and reaches +0.8 dBTP. It will not tell you whether that is right, because that depends entirely on where the file is going, and the same master can be correct for one destination and wrong for the next. The numbers are yours to judge.',
+      ]),
+      el('p', { class: 'muted', text: 'The measurements follow ITU-R BS.1770-4 and EBU Tech 3342, and are tested against the published compliance signals those documents provide \u2014 signals with a known correct reading, which is the only part of this app that has one.' }),
+
+      // ------------------------------------------------------------------
+      // ------------------------------------------------------------------
+      h3('tempo', 'Tempo'),
+      el('p', { text: 'Every report carries a tempo, and it comes in two halves that are deliberately never mixed together.' }),
+      ul([
+        el('span', {}, [el('strong', { text: 'Stated' }), ' is what the file claims about itself \u2014 a number somebody typed into a tag, or that a loop library wrote into the file.']),
+        el('span', {}, [el('strong', { text: 'Measured' }), ' is what the audio turned out to be when Kingfisher worked it out by listening.']),
+      ]),
+      el('p', { text: 'Neither corrects the other. If a file says 100 BPM and plays at 128, you see both numbers and the difference between them, because which one is right is not something this app can decide.' }),
+      el('h4', { text: 'Why it says "estimated"' }),
+      el('p', { text: 'Everything else in a report is read out of the file: the sample rate is written in the header, the peak is in the samples. A tempo is not in the file. It is worked out by arithmetic, and unlike a header field it can be wrong. So it always carries how confident it is, how precise it can be at that tempo, and what it could not establish.' }),
+      el('h4', { text: 'Average, and range' }),
+      el('p', { text: 'Music moves. A live band speeds up into a chorus and settles again, and a single number hides that. So the tempo is also measured in short sections through the piece, and where the movement is real you get a range \u2014 "150.6 BPM, moves between 146.4 and 157.7" \u2014 plus a table showing where it went.' }),
+      el('p', { class: 'muted', text: 'A range is only shown when the movement is bigger than the method\u2019s own margin of error. A track cut to a click says "steady", rather than turning measurement wobble into a performance detail that was never there.' }),
+      el('h4', { text: 'Half-time and double-time' }),
+      el('p', { text: 'Any tempo can be counted at half or double its speed \u2014 150 felt as 75, or a slow tune at 70 counted as 140. Kingfisher shows the alternative only where a listener might genuinely count it the other way: above 140 BPM or below 80. In the middle it says nothing, because nobody is confused about whether 120 is really 60.' }),
+      el('h4', { text: 'When there is no answer' }),
+      el('p', { text: 'Ambient music, a rubato piano piece, spoken word, a field recording \u2014 plenty of audio has no steady pulse, and for those Kingfisher says so rather than producing a number. A tempo you cannot rely on is worse than no tempo at all, because a number invites you to act on it.' }),
+
       h3('clients', 'Clients and projects'),
       el('p', { text: 'Kingfisher keeps a record of your work in two levels:' }),
       ul([
@@ -169,14 +212,16 @@ export function renderHelp(host) {
       ]),
       el('h4', { text: 'Starting out' }),
       ol([
-        'Go to the Clients tab and click “Add client”.',
+        'Go to the Projects tab and click “Add client”.',
         'Open the client and click “Add project”.',
-        'From inside a project, click “Check files into this project” — that takes you to Inspect with the project already selected.',
+        'From inside a project, click “Check files into this project” — that takes you to Inspect with the project already chosen for you.',
       ]),
+      el('h4', { text: 'Filing an import' }),
+      el('p', { text: 'Every time you check files, Kingfisher asks where the results should go before it reads anything. Filing is optional and the window opens on “Just this once” — a file someone has sent you to look at needs no project. If you do want it recorded, pick an existing project or start a new one, under an existing client or a brand new client named right there in the same window. The question is asked at the moment of import because that is when you know the answer; a setting chosen earlier and forgotten is how checks end up filed nowhere.' }),
       el('h4', { text: 'The project log' }),
       el('p', { text: 'Every file you check into a project is added to that project\'s log with the date and time, the technical details, and any observations that came up. The log is a record, not a snapshot: checking the same file again adds a new entry rather than replacing the old one, so you can see how a delivery changed between versions. Click any row to open the full report exactly as it was at the time.' }),
       el('h4', { text: 'Renaming and deleting' }),
-      el('p', { text: 'Clients and projects can be renamed or deleted from their cards in the Clients tab. Deleting tells you exactly how much history goes with it before you confirm. Deleting from Kingfisher never touches your audio files — it only removes the record.' }),
+      el('p', { text: 'Clients and projects can be renamed or deleted from their cards in the Projects tab. Deleting tells you exactly how much history goes with it before you confirm. Deleting from Kingfisher never touches your audio files — it only removes the record.' }),
 
       // ------------------------------------------------------------------
       h3('todo', 'The to-do list'),

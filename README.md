@@ -1,9 +1,10 @@
 # Kingfisher
 
-A local, offline audio file reporter for macOS. Open a WAV file — or a whole
+A local, offline audio file reporter for macOS. Open an audio file — or a whole
 folder of them — and Kingfisher tells you what is in it: sample rate, bit depth,
-channels, duration, embedded BWF/iXML/INFO metadata, and measured levels. It
-keeps a per-client, per-project history of the files you have checked.
+channels, duration, embedded metadata, measured levels and loudness, the tempo it was played
+at, and what the file records about how it was made. It keeps a per-client, per-project history of
+the files you have checked.
 
 **It reports; it does not judge.** There is no target spec and no
 "pass/fail" anywhere in the app. Kingfisher states what a file contains and
@@ -38,15 +39,15 @@ machine only and publishes nothing.
 
 ## What it reads
 
-| Format | Notes | Levels measured |
+| Format | Notes | Levels |
 |---|---|---|
 | **WAV** | PCM 8/16/24/32-bit, IEEE float 32/64-bit, `WAVE_FORMAT_EXTENSIBLE`, RF64/BW64 for files over 4GB | yes |
 | **AIFF / AIFF-C** | Big-endian PCM, float, and the little-endian `sowt` variant most Mac software writes | yes |
 | **CAF** | Apple's Core Audio Format, big- or little-endian, 64-bit sizes | yes (LPCM) |
-| **FLAC** | Exact sample count and audio MD5 from STREAMINFO | no — would need decoding |
-| **M4A / MP4** | AAC (with profile and gapless data) and ALAC | no — would need decoding |
-| **MP3** | Every MPEG version and layer; exact frame-counted duration | no — would need decoding |
-| **Ogg** | Vorbis, Opus (pre-skip handled) and FLAC-in-Ogg | no — would need decoding |
+| **FLAC** | Exact sample count and audio MD5 from STREAMINFO | by decoding |
+| **M4A / MP4** | AAC (with profile and gapless data) and ALAC | by decoding |
+| **MP3** | Every MPEG version and layer; exact frame-counted duration | by decoding |
+| **Ogg** | Vorbis, Opus (pre-skip handled) and FLAC-in-Ogg | by decoding |
 
 Metadata read: BWF `bext` (description, originator, date/time, 64-bit timecode,
 UMID, loudness, coding history), `iXML`, `LIST`/`INFO`, `cue`/`adtl`, `smpl`,
@@ -74,11 +75,75 @@ Some deliberate absences:
 
 - **Bit depth is blank for lossy formats**, because they have none. Showing the
   container's stock "16" would be a fabricated fact.
-- **Levels are not measured for compressed formats**, because that means
-  decoding the audio, which this app does not do. The report says so.
+- **Compressed formats are decoded to measure them.** Uncompressed audio is
+  scanned from its own samples; a compressed file has no peak and no tempo until
+  a decoder has made them, so it is decoded in the browser as part of checking
+  it. The report always names which of the two routes it took, so a scanned
+  reading is never confused with a decoded one. Files past the memory guard are
+  left alone and the report says why.
 
 Adding a format is a new module in `src/core/parsers/` plus a
 `registerParser()` call — no changes to the UI, rules or exporters.
+
+## The documentation
+
+| File | What is in it |
+| --- | --- |
+| `AGENTS.md` | Read first if you are reviewing or changing the code. The two rules that are not style preferences, where the hard parts are, what looks like a bug and is not, and what not to touch. Symlinked as `CLAUDE.md`. |
+| `ARCHITECTURE.md` | How it is put together. |
+| `BUILD_LOG.md` | Why, session by session — every bug worth remembering, what caused it, and what it cost to find. |
+| `DECISIONS.md` | Product and distribution reasoning: what was researched rather than built, and the answers that were "no". |
+| `OVERVIEW.md` | What the app does, feature by feature. |
+| `ROADMAP.md` | What is deliberately not done, with reasons. |
+| `REVIEW-BRIEF.md` | A ready-to-paste prompt for having another model review this code, and why it is worded the way it is. |
+
+**A sortable batch table.** Point it at a folder and one row per file appears
+above the reports — sort by loudness, true peak, sample rate or anything else,
+then click a row to jump to that file's detail. Values that could not be
+established sort to the bottom rather than counting as zero.
+
+**Plain-language definitions.** Terms like true peak, LUFS, valid bits and
+Mixolydian carry a small "i" beside them; clicking it explains what the term
+means in ordinary words. The report keeps the vocabulary of the trade — renaming
+things would make it useless to the people who need it most — so the explanation
+sits beside the term instead. The icons appear only where a definition has been
+written, which keeps them scarce, and the definitions are held to the same rule
+as everything else: they say what a thing is, never what it should be.
+
+**Loudness.** Integrated loudness in LUFS, loudness range in LU and true peak
+in dBTP, to ITU-R BS.1770-4 and EBU Tech 3342 — the measurements every delivery
+spec in music, broadcast and podcasting is actually written in. Peak alone
+cannot tell you how loud a file is; two masters with identical peaks can be
+eight decibels apart to the ear.
+
+True peak is the one level finding that no amount of looking at sample values
+can produce. The waveform a converter reconstructs between the samples can rise
+above all of them, so a file whose every sample sits below full scale can still
+drive playback past it. Kingfisher reconstructs at eight times the file's own
+sample rate — twice what the standard asks for, because with four the limit on
+accuracy stops being the filter and becomes how finely the curve is looked at.
+
+What it does not do is tell you whether any of it is right for wherever the
+file is going. It reports -9.4 LUFS and +0.8 dBTP; what Spotify or the EBU want
+is a target, and targets are the one thing this app has no opinion about.
+
+**Tempo.** Every report carries a tempo: what the file states in its tags, and
+what the audio measures. The two are kept apart and neither corrects the other.
+The measured value is the only number in the app that is worked out rather than
+read, so it carries its own confidence, its own precision, and a range when the
+performance moves — a live take reports "150.6 BPM, moves between 146 and 158"
+rather than pretending a band is a click track. Where nothing repeats regularly
+enough to mean anything, it says so instead of producing a number.
+
+**Key.** Reported in two halves, because they are not equally answerable: the
+**note collection** (the key signature), which chroma establishes well, and the
+**tonal centre**, which it does not. C major and A minor contain exactly the
+same seven notes; so do G Mixolydian and D Dorian. So the notes lead, the
+likely key follows as a best guess, and every key sharing those notes is named
+beside it. Measured on a real recording by transposing it through all twelve
+semitones, the note collection follows 8 times in 10 and the centre 1 time in
+10 — which is why they are presented differently. Material with no key at all
+is refused, with the evidence shown.
 
 ## Exports
 
@@ -117,5 +182,7 @@ src/ui/               views
 test/                 node --test suites
 ```
 
+`OVERVIEW.md` is the feature-by-feature tour, and `START HERE.txt` is the
+plain-language guide to hand to someone who just wants to run it.
 See `ARCHITECTURE.md` for the design decisions and `BUILD_LOG.md` for how it
 was built, including what broke along the way.

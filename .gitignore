@@ -2,3 +2,12 @@ node_modules/
 package-lock.json
 .DS_Store
 shot-*.png
+
+# Build output. `packaging/make-app.sh` assembles Kingfisher.app here out of
+# files that are already tracked, so committing it would duplicate the whole
+# source tree and go stale the moment anything changed. Rebuild it instead.
+dist/
+
+# Python bytecode from make-icon.py.
+__pycache__/
+*.pyc

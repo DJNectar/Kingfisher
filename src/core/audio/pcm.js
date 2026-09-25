@@ -43,9 +43,21 @@ function fullScaleThreshold(bitDepth, isFloat) {
 /**
  * @param {import('../bytes.js').ByteSource} source
  * @param {object} report a parsed report (read-only here)
+ * @param {{maxScanBytes?:number, onsetCollector?:object}} options
+ *   `onsetCollector` and `chromaCollector` are fed the mono downmix as the
+ *   scan walks it, so tempo and key cost one extra pass over samples already
+ *   in hand rather than a decode. `loudnessCollector` is fed the whole frame
+ *   instead: loudness weights the channels differently from each other, and an
+ *   inter-sample peak can exist in one channel alone, so a downmix would hide
+ *   the very thing it is looking for.
  * @returns {Promise<object|null>} stats, or null when there is nothing to measure
  */
-export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCAN_BYTES } = {}) {
+export async function scanAudio(source, report, {
+  maxScanBytes = DEFAULT_MAX_SCAN_BYTES,
+  onsetCollector = null,
+  chromaCollector = null,
+  loudnessCollector = null,
+} = {}) {
   const f = report.format;
   const a = report.audioData;
 
@@ -55,7 +67,7 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
     // not do. Say nothing rather than measure the wrong thing.
     return {
       measured: false,
-      reason: `${f.codec || 'This format'} is not uncompressed PCM, so levels were not measured (the app does not decode audio).`,
+      reason: `${f.codec || 'This format'} is not uncompressed PCM, so its levels cannot be read from the file's bytes. They are measured by decoding it instead.`,
     };
   }
   if (!f.channels || !f.bitDepth) return null;
@@ -89,7 +101,36 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
   const ranges = planRanges(a.offset, totalBytes, frameBytes, maxScanBytes);
   const threshold = fullScaleThreshold(f.bitDepth, isFloat);
 
+  // A very large file is sampled at intervals rather than read end to end. That
+  // is fine for levels, which are a summary, and useless for tempo: the joins
+  // between probes are not silence, they are jump cuts, and the gaps between
+  // them are not time. Onsets either see a continuous performance or they see
+  // nothing worth reporting.
+  const continuous = ranges.length === 1;
+  const onsets = continuous ? onsetCollector : null;
+  const chroma = continuous ? chromaCollector : null;
+  const loudness = continuous ? loudnessCollector : null;
+  if (onsetCollector && !onsets) {
+    onsetCollector.abandon('This file is too large to read end to end, so it was sampled at intervals. Tempo needs continuous audio.');
+  }
+  if (chromaCollector && !chroma) {
+    chromaCollector.abandon('This file is too large to read end to end, so it was sampled at intervals. Key needs continuous audio.');
+  }
+  // Loudness is abandoned for the same reason, and one of its own. Gating
+  // averages over time, and the gaps between probes are not time. Worse, the
+  // join between two probes is a step, and a true-peak detector reconstructs a
+  // step as a spike — it would report an inter-sample over that exists nowhere
+  // in the audio, only in the seam between two pieces of it.
+  if (loudnessCollector && !loudness) {
+    loudnessCollector.abandon('This file is too large to read end to end, so it was sampled at intervals. Loudness needs continuous audio, and the joins between samples would read as peaks that are not in the file.');
+  }
+
   const ch = Array.from({ length: f.channels }, () => newChannelAccumulator());
+  // One reusable frame buffer, handed to the loudness collector per frame.
+  // Allocating a fresh array per frame would make the scan's memory behaviour
+  // depend on the garbage collector, which for a long file is not a trade worth
+  // making for a few lines of convenience.
+  const frameValues = loudness ? new Float64Array(f.channels) : null;
 
   let framesScanned = 0;
   let bytesScanned = 0;
@@ -109,8 +150,18 @@ export async function scanAudio(source, report, { maxScanBytes = DEFAULT_MAX_SCA
       const baseFrame = (pos - a.offset) / frameBytes;
       for (let o = 0; o < usable; o += frameBytes) {
         const frameIndex = baseFrame + o / frameBytes;
+        let sum = 0;
         for (let c = 0; c < f.channels; c++) {
-          accumulate(ch[c], readSample(view, o + c * bytesPerSample), frameIndex, threshold);
+          const value = readSample(view, o + c * bytesPerSample);
+          accumulate(ch[c], value, frameIndex, threshold);
+          if (frameValues) frameValues[c] = value;
+          sum += value;
+        }
+        if (loudness) loudness.push(frameValues, f.channels);
+        if (onsets || chroma) {
+          const mono = sum / f.channels;
+          if (onsets) onsets.push(mono);
+          if (chroma) chroma.push(mono);
         }
         framesScanned++;
       }

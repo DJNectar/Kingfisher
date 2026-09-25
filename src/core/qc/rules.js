@@ -32,6 +32,8 @@ export const THRESHOLDS = {
 };
 
 const fmtDb = (v) => (v === -Infinity ? '-∞' : v.toFixed(2));
+/** As fmtDb, but always signed: "+2.92" and "2.92" must not look alike. */
+const fmtSignedDb = (v) => (v === -Infinity ? '-∞' : `${v > 0 ? '+' : ''}${v.toFixed(2)}`);
 const truncate = (s, n) => (String(s).length <= n ? String(s) : `${String(s).slice(0, n - 1)}…`);
 const fmtHz = (v) => `${v.toLocaleString('en-US')} Hz`;
 
@@ -324,6 +326,46 @@ export const RULES = [
     },
   },
   {
+    /*
+     * An over that exists between the samples rather than in them.
+     *
+     * This is the one level finding that cannot be seen by looking at sample
+     * values at all. Every sample can sit below full scale while the waveform
+     * a converter reconstructs from them goes above it, and the file looks
+     * perfectly safe right up until it is played.
+     *
+     * Stated as a fact about the file, which is what it is: the signal goes
+     * above the largest value the format can represent. Whether that matters
+     * where the file is going is not this app's business, and it does not say.
+     */
+    id: 'true-peak-over',
+    severity: SEVERITY.ATTENTION,
+    evaluate(r) {
+      const l = r.loudness;
+      if (!l?.measured) return null;
+      if (l.truePeak === null || !Number.isFinite(l.truePeak)) return null;
+      if (l.truePeak <= 0) return null;
+
+      const over = l.channels.filter((c) => c.truePeakDbtp > 0);
+      const where = over.length === l.channels.length
+        ? 'every channel'
+        : over.map((c) => c.name).join(' and ');
+      const samplesAlso = l.samplePeak > 0;
+
+      return {
+        id: 'true-peak-over',
+        title: `Peaks ${fmtSignedDb(l.truePeak)} dBTP between samples`,
+        detail: `Reconstructed at ${l.overSampling} times the file's own sample rate, the waveform reaches ${fmtSignedDb(
+          l.truePeak,
+        )} dBTP in ${where}, against a sample peak of ${fmtSignedDb(l.samplePeak)} dBFS. ${
+          samplesAlso
+            ? 'The stored samples are already at or above full scale here.'
+            : 'No individual sample is above full scale — the overshoot is in the curve between them, which is what a converter actually reproduces.'
+        }`,
+      };
+    },
+  },
+  {
     id: 'peak-at-ceiling',
     severity: SEVERITY.NOTICE,
     evaluate(r) {
@@ -484,9 +526,13 @@ export const RULES = [
       const assessment = r.provenance?.assessment;
       if (!assessment || assessment.flag === 'none') return null;
 
-      const reasons = assessment.reasons.map((reason) => `• ${reason.text}`).join('\n');
+      const reasons = assessment.reasons.map((reason) => `\u2022 ${reason.text}`).join('\n');
       return {
         id: 'possible-ai-generated',
+        // A file that names the service that made it is not a footnote. It sat
+        // under "worth noting" on a real Suno export and was read as a miss,
+        // which is a fair reading of something filed that quietly.
+        severity: assessment.flag === 'declared' ? SEVERITY.ATTENTION : SEVERITY.NOTICE,
         title: assessment.headline,
         detail: `What raised this:\n${reasons}\n\n${assessment.limits.join(' ')}`,
       };

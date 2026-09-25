@@ -16,12 +16,13 @@ import {
   formatBitDepth,
   formatChannels,
   formatDbfs,
+  formatSignedDb,
   formatTimestamp,
   UNKNOWN,
 } from '../core/format.js';
 import { PARSE_STATUS } from '../core/report.js';
 import { SEVERITY_LABELS } from '../core/qc/severity.js';
-import { APP_VERSION } from '../store/schema.js';
+import { APP_VERSION, BUILD_DATE } from '../store/schema.js';
 
 const RULE = '='.repeat(72);
 const THIN = '-'.repeat(72);
@@ -93,6 +94,12 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
     }
     if (f.sampleEndianness === 'big') lines.push(row('Byte order', 'big-endian'));
 
+    if (report.isrc) {
+      lines.push(section('ISRC'));
+      lines.push(row('Recording code', report.isrc.formatted));
+      lines.push(row('Found in', report.isrc.where));
+    }
+
     lines.push(section('DURATION'));
     if (report.duration.seconds === null) {
       lines.push(`  ${UNKNOWN}  (could not be determined — see Read result above)`);
@@ -105,6 +112,9 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
     }
 
     lines.push(...renderLevels(report));
+    lines.push(...renderLoudness(report));
+    lines.push(...renderTempo(report));
+    lines.push(...renderKey(report));
   }
 
   lines.push(...renderObservations(report.observations));
@@ -114,7 +124,7 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
 
   lines.push('');
   lines.push(THIN);
-  lines.push(`Kingfisher ${APP_VERSION} — read-only report. Nothing in the audio file was changed.`);
+  lines.push(`Kingfisher ${APP_VERSION} (build ${BUILD_DATE}) — read-only report. Nothing in the audio file was changed.`);
   return lines.join('\n');
 }
 
@@ -212,7 +222,159 @@ function renderLevels(report) {
   return lines;
 }
 
-export function renderObservations(observations) {
+/**
+ * Loudness, in the export as on screen. No target appears here either: the
+ * printed report is the thing that gets emailed to a client, which is exactly
+ * where a made-up pass mark would do the most damage.
+ */
+function renderLoudness(report) {
+  const l = report.loudness;
+  if (!l) return [];
+
+  const lines = [];
+  lines.push(section('LOUDNESS'));
+
+  if (!l.measured) {
+    lines.push(row('Loudness', 'not measured'));
+    lines.push(row('Why not', l.reason));
+    return lines;
+  }
+
+  lines.push(row(
+    'Integrated',
+    l.integrated !== null ? `${l.integrated.toFixed(2)} LUFS` : 'not established',
+  ));
+  if (l.integrated === null && l.integratedReason) lines.push(row('Why not', l.integratedReason));
+
+  lines.push(row(
+    'Loudness range',
+    l.range !== null ? `${l.range.toFixed(2)} LU` : 'not established',
+  ));
+  if (l.range === null && l.rangeReason) lines.push(row('Why not', l.rangeReason));
+
+  if (Number.isFinite(l.shortTermMax)) lines.push(row('Loudest 3 seconds', `${l.shortTermMax.toFixed(2)} LUFS`));
+  if (Number.isFinite(l.momentaryMax)) lines.push(row('Loudest 400 ms', `${l.momentaryMax.toFixed(2)} LUFS`));
+
+  lines.push(row('True peak', `${formatSignedDb(l.truePeak, 2)} dBTP`));
+  lines.push(row('Sample peak', `${formatSignedDb(l.samplePeak, 2)} dBFS`));
+  lines.push(row('How', `${l.standard} K-weighting, reconstructed at ${l.overSampling}\u00d7 for the peak`));
+
+  if (l.truePeakExceedsSample) {
+    lines.push('');
+    lines.push(`  The reconstructed waveform runs ${(l.truePeak - l.samplePeak).toFixed(2)} dB above the loudest`);
+    lines.push('  stored sample. That gap lives between the samples, so nothing in the');
+    lines.push("  file's own values shows it.");
+  }
+
+  if (l.channels.length > 1) {
+    lines.push('');
+    lines.push(`  ${'Channel'.padEnd(10)}${'True peak'.padStart(14)}${'Sample peak'.padStart(14)}`);
+    for (const c of l.channels) {
+      lines.push(
+        `  ${c.name.padEnd(10)}${`${formatSignedDb(c.truePeakDbtp, 2)} dBTP`.padStart(14)}${
+          `${formatSignedDb(c.samplePeakDbfs, 2)} dBFS`.padStart(14)
+        }`,
+      );
+    }
+  }
+
+  if (l.limits?.length) {
+    lines.push('');
+    for (const limit of l.limits) lines.push(`  ${limit}`);
+  }
+
+  return lines;
+}
+
+export /**
+ * Tempo, in the export as on screen: the file's claim and the app's reading,
+ * side by side, neither correcting the other.
+ */
+function renderTempo(report) {
+  const measured = report.tempo?.measured;
+  const stated = report.tempo?.stated;
+  if (!measured && !stated) return [];
+
+  const lines = [];
+  lines.push(section('TEMPO'));
+
+  if (stated) lines.push(row('Stated in the file', `${stated.bpm} BPM  (${stated.source})`));
+
+  if (measured?.established) {
+    lines.push(row('Measured from the audio', `${measured.bpm.toFixed(2)} BPM`));
+    lines.push(row('Confidence', measured.confidence));
+    lines.push(row(
+      'Through the piece',
+      measured.range
+        ? `moves between ${measured.range.min.toFixed(1)} and ${measured.range.max.toFixed(1)} BPM`
+        : 'steady \u2014 no movement beyond what this method can resolve',
+    ));
+    if (measured.alternativeFeel) {
+      lines.push(row(
+        `Or ${measured.alternativeFeel.name}`,
+        `${measured.alternativeFeel.bpm.toFixed(1)} BPM \u2014 ${measured.alternativeFeel.note}`,
+      ));
+    }
+    lines.push(row('Precision', `\u00b1${measured.resolutionBpm.toFixed(2)} BPM at this tempo`));
+    lines.push(row('How', measured.method));
+
+    if (stated) {
+      const difference = Math.abs(measured.bpm - stated.bpm);
+      if (difference > Math.max(1, measured.resolutionBpm)) {
+        lines.push('');
+        lines.push(`  The file states ${stated.bpm} BPM and the audio measures ${measured.bpm.toFixed(1)},`);
+        lines.push(`  a difference of ${difference.toFixed(1)} BPM. Both are reported as found.`);
+      }
+    }
+  } else if (measured) {
+    lines.push(row('Measured from the audio', 'not established'));
+    lines.push(row('Why not', measured.reason));
+  }
+
+  if (measured?.limits?.length) {
+    lines.push('');
+    for (const limit of measured.limits) lines.push(`  \u2022 ${limit}`);
+  }
+
+  return lines;
+}
+
+/** Key, in the export as on screen: the notes first, the centre as a guess. */
+function renderKey(report) {
+  const key = report.key;
+  if (!key) return [];
+
+  const lines = [section('KEY')];
+
+  if (!key.established) {
+    lines.push(row('Key', 'not established'));
+    lines.push(row('Why not', key.reason));
+    return lines;
+  }
+
+  lines.push(row('Notes used', `${key.signature.notes.join(' ')}  (${key.signature.name})`));
+  lines.push(row('Likely key', key.name));
+  if (key.ambiguous) {
+    lines.push(row('Or equally', `${key.alternatives.map((a) => a.name).join(', ')} \u2014 the same seven notes`));
+  }
+  lines.push(row('Confidence', key.confidence));
+  if (key.sections.length >= 2) {
+    lines.push(row('Through the piece', key.steady ? 'settles in one place throughout' : 'moves between sections'));
+    lines.push(row('Starts in', key.startsIn));
+    lines.push(row('Ends in', key.endsIn));
+  }
+  lines.push(row('How tonal', `${key.tonalStrength.label} \u2014 ${key.tonalStrength.detail}`));
+  lines.push(row('Pitched energy on those notes', `${(key.concentration * 100).toFixed(0)}%, against 58% by chance`));
+  lines.push(row('How', key.method));
+
+  if (key.limits?.length) {
+    lines.push('');
+    for (const limit of key.limits) lines.push(`  \u2022 ${limit}`);
+  }
+  return lines;
+}
+
+function renderObservations(observations) {
   const lines = [section('OBSERVATIONS')];
   if (!observations.length) {
     lines.push('  Nothing to note. No unusual values or signal conditions were found.');

@@ -146,6 +146,60 @@ export function createReport(file = {}) {
     /** Measured signal statistics. Null when the audio was not scanned. */
     audio: null,
 
+    /**
+     * Tempo, in two strictly separate halves:
+     *
+     *   stated    what the file claims, out of a tag or an ACID chunk
+     *   measured  what the audio turned out to be, worked out by listening
+     *
+     * They are never merged and neither corrects the other. Everything else in
+     * this report is read from the file; `measured` is the one value that is an
+     * opinion about it, and it carries its own confidence and limits so it
+     * cannot be mistaken for a stored field.
+     */
+    tempo: {
+      stated: null,
+      measured: null,
+    },
+
+    /**
+     * Key, in the same two halves the analysis actually answers:
+     *
+     *   signature  which notes are being used — established well
+     *   centre     which of them is home — much weaker, and said so
+     *
+     * Measured on a real recording, the note collection follows a
+     * transposition 8 times out of 10 and the tonal centre 1 time out of 10.
+     * The report is shaped around that: the notes lead, the centre is a best
+     * guess, and every key sharing those notes is named beside it.
+     */
+    key: null,
+
+    /**
+     * Loudness, to ITU-R BS.1770-4 and EBU Tech 3342: integrated LUFS, the
+     * loudness range, and the true peak found by reconstructing the waveform
+     * between its samples.
+     *
+     * These are measurements, not marks. The report says the file is -9.4 LUFS
+     * and reaching +0.8 dBTP; it does not say whether that suits wherever the
+     * file is going, because it does not know and is not asked.
+     */
+    loudness: null,
+
+    /**
+     * The recording's ISRC, where the file carries one.
+     *
+     * Kept out of `metadata` and given its own field because it is not really
+     * metadata about the file — it is the identity of the recording inside it,
+     * the thing a distributor, a society and a royalty statement all key on.
+     * At delivery it is checked more often than anything else here, so it sits
+     * with the headline facts rather than inside a tag list.
+     *
+     * {code, formatted, where} or null. Validated, not just read: see
+     * core/metadata/isrc.js for why that distinction matters in RIFF.
+     */
+    isrc: null,
+
     /** Factual notes produced by the observation rules. Never comparisons. */
     observations: [],
 
@@ -213,6 +267,33 @@ export function summarizeReport(report) {
      * Read directly off the assessment rather than importing the provenance
      * module, to keep this model free of dependencies on the analysis.
      */
+    /*
+     * Tempo, for the same reason as the origin flag below: list views and the
+     * history CSV read the summary, so a logged check would otherwise lose its
+     * tempo even though the stored report still holds it. Stated and measured
+     * stay separate here as everywhere else.
+     */
+    statedBpm: report.tempo?.stated?.bpm ?? null,
+    measuredBpm: report.tempo?.measured?.established ? report.tempo.measured.bpm : null,
+    tempoConfidence: report.tempo?.measured?.established ? report.tempo.measured.confidence : null,
+    tempoSteady: report.tempo?.measured?.established ? report.tempo.measured.steady : null,
+
+    keySignature: report.key?.established ? report.key.signature.name : null,
+    keyName: report.key?.established ? report.key.name : null,
+    keyConfidence: report.key?.established ? report.key.confidence : null,
+
+    /*
+     * Loudness, carried in the summary for the same reason as tempo and the
+     * origin flag: the history CSV and the list views read the summary, and
+     * "which of these came in hot?" is a question a delivery log gets asked
+     * constantly.
+     */
+    integratedLufs: report.loudness?.measured ? report.loudness.integrated : null,
+    loudnessRange: report.loudness?.measured ? report.loudness.range : null,
+    truePeakDbtp: report.loudness?.measured ? report.loudness.truePeak : null,
+
+    isrc: report.isrc?.code ?? null,
+
     originFlag: report.provenance?.assessment?.flag ?? null,
     originConfidence: report.provenance?.assessment?.confidence ?? null,
     originHeadline: report.provenance?.assessment?.headline ?? null,

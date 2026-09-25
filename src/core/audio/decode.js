@@ -1,35 +1,35 @@
 /**
- * Optional decoded-level measurement for compressed audio.
+ * Decoded measurement for compressed audio: levels and tempo.
  *
- * WHY THIS EXISTS, AND WHY IT IS OPT-IN.
+ * WHY IT EXISTS. A compressed file has no peak and no tempo until something
+ * decodes it. And there is one finding available no other way: a lossy encoder
+ * can produce a file that EXCEEDS full scale once decoded, even though the
+ * audio going in peaked safely below it. The encoded file looks fine and the
+ * playback distorts, and nothing in the header says so.
  *
- * Kingfisher reads files; it does not decode them. For MP3, AAC, Opus and
- * Vorbis that means no level readings, because the peak of a compressed file
- * only exists once something has decoded it.
+ * WHY IT NOW RUNS BY ITSELF. This used to be opt-in, on the principle that the
+ * app never decodes audio unless asked. Tempo changed the balance: a tempo is
+ * wanted on every file, and for a compressed file there is no way to it except
+ * through the decoder. A button that must be pressed on every file is not a
+ * safeguard, it is a chore. So compressed files are now decoded as part of
+ * checking them, and the app's own description was corrected to match rather
+ * than left saying something that had stopped being true.
  *
- * But there is one finding you cannot get any other way, and it matters: a
- * lossy encoder can produce a file that EXCEEDS full scale when decoded, even
- * though the audio going in peaked safely below it. The encoded file looks
- * fine; the playback distorts. Nothing in the file's header says so.
- *
- * So this module exists, and the user asks for it per file. It is not automatic
- * because:
- *   - it needs the whole file in memory, and then the whole DECODED result on
- *     top of that, as 32-bit floats: roughly 10 MB per stereo minute at 44.1
- *     kHz. A two-hour recording would be several gigabytes and take the tab
- *     down, hence the guard below;
- *   - it is slow enough to notice on a folder of files;
- *   - and it is a real departure from "this app never decodes audio", which
- *     should be the user's decision rather than a silent default.
+ * WHAT STILL HOLDS IT BACK. The size guard below. Decoding needs the whole file
+ * in memory and then the whole decoded result on top, as 32-bit floats —
+ * roughly 10 MB per stereo minute at 44.1 kHz. Past the limit the file is left
+ * alone and the report says why, rather than taking the browser down.
  *
  * WHAT IT MEASURES. The DECODED signal — what a listener's converter actually
- * receives. That is the right thing to measure for this purpose, and it is not
- * the same as what the encoder was fed. Reports label it as decoded, and name
- * the browser that did the decoding, because two browsers' decoders can differ
+ * receives, which is not the same as what the encoder was fed. Reports label it
+ * as decoded and name the browser that did it, because two decoders can differ
  * slightly and a number should say where it came from.
  */
 
 import { measureFloatChannels } from './measure.js';
+import { estimateTempo } from './tempo.js';
+import { estimateKey } from './key.js';
+import { measureLoudness } from './loudness.js';
 
 /** Bytes of decoded audio we are willing to hold. 400 MB ≈ 40 stereo minutes. */
 export const MAX_DECODED_BYTES = 400 * 1024 * 1024;
@@ -68,7 +68,7 @@ function probeKeyFor(report) {
 }
 
 /**
- * Can this browser decode this file, and should we offer to?
+ * Can this browser decode this file, and should it?
  *
  * Returns a reason string when the answer is no, so the UI can explain rather
  * than just disabling a button.
@@ -156,10 +156,15 @@ export function decoderName() {
 /**
  * Decode a file and measure it.
  *
+ * Levels, loudness, tempo and key all come out of the one decode. Decoding is by far the
+ * expensive part; once the samples are in hand, reading a tempo off them costs
+ * a fraction of what getting them cost, so doing it twice would be the only
+ * wasteful choice available.
+ *
  * @param {File|Blob} file the original file
  * @param {object} report its parsed report, for channel names and rate
- * @returns {Promise<object>} an `audio` stats object, in the same shape the
- *   PCM scanner produces, with `source: 'decoded'`
+ * @returns {Promise<{stats:object, tempo:object|null}>} `stats` is in the same
+ *   shape the PCM scanner produces, with `source: 'decoded'`
  * @throws {Error} with a message written for the user, not for a developer
  */
 export async function decodeAndMeasure(file, report) {
@@ -206,5 +211,16 @@ export async function decodeAndMeasure(file, report) {
   stats.decodedSeconds = audio.duration;
   stats.containerSeconds = report.duration.seconds ?? null;
 
-  return stats;
+  return {
+    stats,
+    tempo: estimateTempo(channelData, { sampleRate: audio.sampleRate }),
+    key: estimateKey(channelData, { sampleRate: audio.sampleRate }),
+    // Measured on the DECODED signal, which is the point: a lossy encoder can
+    // push the reconstructed waveform past full scale even when what went in
+    // did not, and that over exists nowhere in the file's own bytes.
+    loudness: measureLoudness(channelData, {
+      sampleRate: audio.sampleRate,
+      channelNames: report.format.layoutChannels,
+    }),
+  };
 }

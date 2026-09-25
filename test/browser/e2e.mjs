@@ -53,6 +53,14 @@ page.on('pageerror', e => errors.push(`pageerror: ${e.message}\n${e.stack}`));
 
 const step = (s) => console.log(`\n=== ${s} ===`);
 
+/** Answer the import destination window with "don't log — just show me". */
+async function dontLog(p) {
+  await p.waitForSelector('#dest-target');
+  await p.selectOption('#dest-target', '__none__');
+  await p.click('.modal button[type="submit"]');
+}
+
+
 await page.goto(`${BASE}/index.html`, { waitUntil: 'networkidle' });
 
 // ---------------------------------------------------------------- 1. library
@@ -80,12 +88,17 @@ console.log('project heading:', (await page.locator('#view-clients h2').first().
 step('Check files into the project');
 await page.click('button:has-text("Check files into this project")');
 await page.waitForTimeout(200);
-console.log('log target selected:', await page.locator('#log-project').inputValue() !== '' ? 'yes' : 'NO');
+console.log('remembered destination line:', (await page.locator('#pick-target').textContent()).trim());
 
 const chooserPromise = page.waitForEvent('filechooser');
 await page.click('#btn-pick-files');
 const chooser = await chooserPromise;
 await chooser.setFiles(files);
+// The destination window opens before a byte is read. It should already have
+// the project chosen by "Check files into this project" selected.
+await page.waitForSelector('#dest-target');
+console.log('destination preselected:', (await page.locator('#dest-target option:checked').textContent()).trim());
+await page.click('.modal button[type="submit"]');
 await page.waitForTimeout(2500);
 
 const cards = await page.locator('.report').count();
@@ -104,6 +117,12 @@ const expect = (label, re, text = bodyText) => {
   const ok = re.test(text);
   console.log(`  ${ok ? 'OK  ' : 'FAIL'} ${label}`);
   if (!ok) failures.push(label);
+};
+/** For assertions about counts and flags rather than about text. */
+const expectIs = (label, actual, wanted) => {
+  const ok = Object.is(actual, wanted);
+  console.log(`  ${ok ? 'OK  ' : 'FAIL'} ${label}`);
+  if (!ok) failures.push(`${label} (got ${actual}, wanted ${wanted})`);
 };
 
 expect('48 kHz on riverbed', /48 kHz/);
@@ -242,11 +261,11 @@ console.log('  cancelled, client still present:', /The Bandits Ltd/.test(await p
 // this is where their content is verified.
 step('Single-file view shows embedded metadata expanded');
 await page.click('.tab[data-view="inspect"]');
-await page.selectOption('#log-project', '');
 {
   const c = page.waitForEvent('filechooser');
   await page.click('#btn-pick-files');
   (await c).setFiles([join(AUDIO, '01 riverbed.wav')]);
+  await dontLog(page);
   await page.waitForTimeout(1200);
   const single = await page.locator('#results').innerText();
   expect('bext description', /SC 14 TK 3 — kitchen wide/, single);
@@ -266,17 +285,18 @@ await page.selectOption('#log-project', '');
 // Chrome and Safari ship but open-source Chromium builds omit.
 step('Measure levels by decoding');
 await page.click('.tab[data-view="inspect"]');
-await page.selectOption('#log-project', '');
 {
   const c = page.waitForEvent('filechooser');
   await page.click('#btn-pick-files');
   (await c).setFiles([join(AUDIO, '11 plain.mp3')]);
+  await dontLog(page);
   await page.waitForTimeout(1500);
 
-  const offer = page.locator('.measure-offer button');
-  expect('an offer to measure levels is shown', /./, (await offer.count()) ? 'yes' : '');
-  await offer.first().click();
+  // No button to press: a compressed file is decoded as part of checking it,
+  // because its levels and its tempo do not exist until something has.
   await page.waitForSelector('.detail-section:has-text("Levels")', { timeout: 60000 });
+  expect('no measure-levels button is left to press', /^0$/,
+    String(await page.locator('.measure-offer button').count()));
 
   // The Levels section renders already open for a single file, so clicking its
   // summary unconditionally would close it and read back nothing.
@@ -311,6 +331,7 @@ step('Provenance: declared, possible, and nothing found');
     join(AUDIO, '10 tool-tagged.mp3'),
     join(AUDIO, '01 riverbed.wav'),
   ]);
+  await dontLog(page);
   await page.waitForTimeout(3000);
 
   const declared = await page.locator('.report').nth(0).locator('.ai-flag').innerText();
@@ -320,7 +341,9 @@ step('Provenance: declared, possible, and nothing found');
   expect('and it is not claimed as verified', /did not verify the signature/i, declared);
 
   const tagged = await page.locator('.report').nth(1).locator('.ai-flag').innerText();
-  expect('a tool-tagged file reads as possible, not declared', /Possibly AI-generated/i, tagged);
+  // Naming the service settles it, wherever the name appears: "if there is
+  // mention of Suno, it is AI."
+  expect('a tool-tagged file names the service that made it', /made with Suno/i, tagged);
   expect('the tool is named', /Suno/, tagged);
   expect('the phrase in the comment is a separate reason', /"AI-generated"/i, tagged);
 
@@ -339,6 +362,258 @@ step('Provenance: declared, possible, and nothing found');
   expect('with the watermark limit stated', /watermark/i, plain);
 }
 await page.screenshot({ path: join(HERE, 'shot-provenance.png'), fullPage: false });
+
+// ------------------------------- 11. filing an import into a new project
+// The destination window is the only way to choose where checks are filed, so
+// its create-as-you-go path is the one that has to work: a brand new client
+// and a new project under it, named in the same window as the import.
+step('Destination window creates a client and a project');
+{
+  await page.click('.tab[data-view="inspect"]');
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([join(AUDIO, '01 riverbed.wav')]);
+  await page.waitForSelector('#dest-target');
+
+  // A project is never required. With none in hand the window leads with the
+  // one-off and selects it, so checking a file someone sent over is a confirm.
+  expect('the one-off is the first thing offered', /Just this once/,
+    await page.locator('#dest-target option').first().textContent());
+  expect('and it is what is selected by default', /Just this once/,
+    await page.locator('#dest-target option:checked').textContent());
+  expect('no project name is asked for until one is wanted', /false/,
+    String(await page.locator('#dest-project-name').isVisible()));
+
+  await page.selectOption('#dest-target', '__new__');
+  await page.selectOption('#dest-client', '__new__');
+  expect('naming a new client is asked for', /true/,
+    String(await page.locator('#dest-client-name').isVisible()));
+  await page.fill('#dest-client-name', 'Wren Recordings');
+  await page.fill('#dest-project-name', 'Session tapes');
+  await page.screenshot({ path: join(HERE, 'shot-destination.png'), fullPage: false });
+  await page.click('.modal button[type="submit"]');
+  await page.waitForTimeout(1500);
+
+  expect('the new destination is shown under the Check buttons', /Wren Recordings › Session tapes/,
+    await page.locator('#pick-target').textContent());
+
+  await page.click('.tab[data-view="clients"]');
+  await page.waitForTimeout(400);
+  const roster = await page.locator('#view-clients').innerText();
+  expect('the tab lists projects by client', /Projects by client/, roster);
+  expect('the new client is in the roster', /Wren Recordings/, roster);
+  expect('with the check already logged to it', /1 project/, roster);
+
+  // And a second import into an existing client, choosing a new project only.
+  await page.click('.tab[data-view="inspect"]');
+  const c2 = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c2).setFiles([join(AUDIO, '02 clipped.wav')]);
+  await page.waitForSelector('#dest-target');
+  expect('the last destination is remembered as the default', /Session tapes/,
+    await page.locator('#dest-target option:checked').textContent());
+  await page.selectOption('#dest-target', '__new__');
+  await page.selectOption('#dest-client', await page.locator('#dest-client option', { hasText: 'Wren Recordings' }).getAttribute('value'));
+  expect('an existing client needs no name', /false/,
+    String(await page.locator('#dest-client-name').isVisible()));
+  await page.fill('#dest-project-name', 'Mix revisions');
+  await page.click('.modal button[type="submit"]');
+  await page.waitForTimeout(1500);
+  expect('the second project is filed under the same client', /Wren Recordings › Mix revisions/,
+    await page.locator('#pick-target').textContent());
+}
+
+// -------------------------------------------------------------- 12. tempo
+// The one number in the app that is worked out rather than read, so what is
+// tested here is as much how it is PRESENTED as whether it is right.
+step('Tempo: measured, stated, and refused');
+{
+  await page.click('.tab[data-view="inspect"]');
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([join(AUDIO, '12 click-128.wav')]);
+  await dontLog(page);
+  await page.waitForTimeout(3000);
+
+  const card = page.locator('.report').first();
+  const tiles = await card.locator('.facts').innerText();
+  expect('a tempo tile is shown', /TEMPO/i, tiles);
+  expect('the tile reads about 128 BPM', /\b12[6-9]\b/, tiles);
+  // The tile sits in a row of facts read out of the file, so it has to say
+  // what it is or it will be taken for one of them.
+  expect('the tile says the value is estimated', /estimated/i, tiles);
+
+  const tempoSection = card.locator('.detail-section:has-text("Tempo")').first();
+  if ((await tempoSection.getAttribute('open')) === null) {
+    await tempoSection.locator('summary').click();
+    await page.waitForTimeout(300);
+  }
+  const tempo = await tempoSection.locator('.detail-body').innerText();
+
+  // The WAV was never decoded: its samples were already being read for levels.
+  const levels = await card.locator('.detail-section:has-text("Levels") .detail-body').innerText();
+  expect('an uncompressed file was not decoded to get its tempo', /file's own samples|file bytes/i, levels);
+
+  // 127.99, not 128.00: the click track is 128 BPM and the estimate lands
+  // within its own stated precision of it. Demanding an exact 128 would be
+  // asserting more accuracy than the method claims.
+  expect('the measured tempo is shown', /Measured from the audio\s*12[78]\.\d+ BPM/, tempo.replace(/\n/g, ' '));
+  expect('a confidence is given', /Confidence\s*high/, tempo.replace(/\n/g, ' '));
+  expect('a click track is reported steady, with no invented range', /steady/i, tempo);
+  expect('the precision is stated', /±\s*[\d.]+ BPM/, tempo);
+  expect('it says the number was not read from the file', /not a value stored in the file/i, tempo);
+  await page.screenshot({ path: join(HERE, 'shot-tempo.png'), fullPage: false });
+}
+
+step('Loudness: LUFS, range, and an over that is not in any sample');
+{
+  await page.click('.tab[data-view="inspect"]');
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles([join(AUDIO, '13 intersample-over.wav')]);
+  await dontLog(page);
+  await page.waitForTimeout(4000);
+
+  const card = page.locator('.report').first();
+  const tiles = await card.locator('.facts').innerText();
+  expect('a loudness tile is shown', /LOUDNESS/i, tiles);
+  expect('it is given in LUFS', /LUFS/, tiles);
+  expect('a true peak tile is shown', /TRUE PEAK/i, tiles);
+  expect('the true peak is above full scale', /\+\d/, tiles);
+
+  const loudSection = card.locator('.detail-section:has-text("Loudness")').first();
+  if ((await loudSection.getAttribute('open')) === null) {
+    await loudSection.locator('summary').click();
+    await page.waitForTimeout(300);
+  }
+  const loud = (await loudSection.locator('.detail-body').innerText()).replace(/\n/g, ' ');
+
+  expect('integrated loudness is reported', /Integrated\s*-?\d+\.\d+ LUFS/, loud);
+  expect('the loudness range is reported', /Loudness range\s*\d+\.\d+ LU/, loud);
+  expect('true peak is reported in dBTP', /True peak\s*\+\d+\.\d+ dBTP/, loud);
+  expect('the sample peak is shown beside it', /Sample peak\s*-\d+\.\d+ dBFS/, loud);
+  expect('the gap between them is spelled out', /above the loudest stored sample/i, loud);
+  expect('the method is named', /BS\.1770/, loud);
+  expect('peaks are broken out per channel', /FL/, loud);
+
+  // The finding itself, in the observation list where it belongs.
+  const observations = await card.locator('.observations, .obs-list').first().innerText()
+    .catch(() => card.innerText());
+  expect('the over is reported as an observation', /between samples/i, observations);
+  // And no verdict anywhere about whether any of this is acceptable.
+  expect('no target is stated', /^(?!.*\b(too loud|should be|target level)\b).*$/is, loud);
+
+  await page.screenshot({ path: join(HERE, 'shot-loudness.png'), fullPage: false });
+}
+
+step('Explaining a term: the "i" icons');
+{
+  // Carries on from the loudness file already on screen.
+  const card = page.locator('.report').first();
+
+  // Scarce by construction: an icon exists only where something was written.
+  const dots = await card.locator('.info-dot').count();
+  expectIs('terms carry an explain icon', dots > 5, true);
+  const fileSizeTile = card.locator('.fact', { hasText: 'FILE SIZE' }).first();
+  expectIs('a self-evident label has none', await fileSizeTile.locator('.info-dot').count(), 0);
+
+  // Open the one on the true peak tile.
+  const tpDot = card.locator('.fact', { hasText: 'TRUE PEAK' }).first().locator('.info-dot');
+  expectIs('the true peak tile has one', await tpDot.count(), 1);
+  await tpDot.click();
+  await page.waitForTimeout(200);
+
+  const pop = page.locator('.info-pop');
+  expectIs('a popup opens', await pop.count(), 1);
+  const popText = await pop.innerText();
+  expect('it names the term', /True peak/, popText);
+  expect('it explains it in plain words', /between the samples/i, popText);
+  expect('it states no target', /^(?!.*\b(target|too loud|should be|spotify)\b).*$/is, popText);
+  expectIs('it is on screen', await pop.isVisible(), true);
+
+  // Escape puts it away.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  expectIs('Escape closes it', await page.locator('.info-pop').count(), 0);
+
+  // An icon inside a section heading must explain, not collapse.
+  const loudSection = card.locator('.detail-section:has-text("Loudness")').first();
+  const wasOpen = (await loudSection.getAttribute('open')) !== null;
+  await loudSection.locator('summary .info-dot').click();
+  await page.waitForTimeout(200);
+  expectIs('the heading icon opens a popup', await page.locator('.info-pop').count(), 1);
+  expectIs(
+    'and does not collapse the section it explains',
+    (await loudSection.getAttribute('open')) !== null,
+    wasOpen,
+  );
+
+  await page.screenshot({ path: join(HERE, 'shot-info.png'), fullPage: false });
+
+  // Clicking elsewhere dismisses it.
+  await page.locator('h1, .report-title').first().click();
+  await page.waitForTimeout(150);
+  expectIs('clicking away closes it', await page.locator('.info-pop').count(), 0);
+}
+
+step('Launch screen and the sortable batch table');
+{
+  // The splash must clear itself with no help from any script, and must never
+  // be able to swallow a click while it is on screen.
+  const splash = await page.evaluate(() => {
+    const el = document.querySelector('.splash');
+    if (!el) return { present: false };
+    const cs = getComputedStyle(el);
+    const hit = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    return {
+      present: true,
+      visibility: cs.visibility,
+      pointerEvents: cs.pointerEvents,
+      blocksClicks: !!hit?.closest('.splash'),
+    };
+  });
+  expectIs('a launch screen is in the page', splash.present, true);
+  expectIs('it never takes pointer events', splash.pointerEvents, 'none');
+  expectIs('it has cleared itself', splash.visibility, 'hidden');
+  expectIs('and is not swallowing clicks', splash.blocksClicks, false);
+
+  // Load several files so the batch view appears.
+  await page.click('.tab[data-view="inspect"]');
+  const c = page.waitForEvent('filechooser');
+  await page.click('#btn-pick-files');
+  (await c).setFiles(files.slice(0, 5));
+  await dontLog(page);
+  await page.waitForTimeout(9000);
+
+  const rows = page.locator('.batch-table tbody tr');
+  expectIs('one table row per file', await rows.count(), 5);
+  const head = await page.locator('.batch-table thead').innerText();
+  expect('the columns a delivery is scanned by are there', /LUFS/, head);
+  expect('including true peak', /dBTP/, head);
+
+  // Sorting by name, both ways, must be exact opposites of each other.
+  const nameCol = page.locator('.batch-sort', { hasText: 'File' }).first();
+  await nameCol.click();
+  await page.waitForTimeout(200);
+  const asc = (await rows.allInnerTexts()).map((t) => t.split('\t')[0]);
+  await nameCol.click();
+  await page.waitForTimeout(200);
+  const desc = (await rows.allInnerTexts()).map((t) => t.split('\t')[0]);
+  expectIs('clicking a column sorts it', JSON.stringify(asc) !== JSON.stringify(desc), true);
+  expectIs('and clicking again reverses it', JSON.stringify([...asc].reverse()), JSON.stringify(desc));
+  expect('the sorted column is marked for screen readers', /ascending|descending/,
+    await page.locator('.batch-table th[aria-sort]').first().getAttribute('aria-sort') ?? '');
+
+  // A row takes you to that file's card.
+  await rows.nth(2).click();
+  await page.waitForTimeout(500);
+  expectIs('clicking a row marks one card', await page.locator('.report.targeted').count(), 1);
+  const picked = (await rows.nth(2).innerText()).split('\t')[0].trim();
+  const marked = (await page.locator('.report.targeted .report-title').innerText()).trim();
+  expectIs('and it is the right one', marked, picked);
+
+  await page.screenshot({ path: join(HERE, 'shot-batch.png'), fullPage: false });
+}
 
 console.log('\n=== RESULT ===');
 console.log('page errors:', errors.length ? errors.join('\n') : 'none');

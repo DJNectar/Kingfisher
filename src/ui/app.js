@@ -14,6 +14,7 @@
  */
 
 import { $, el, clear, toast, modal, confirmDialog } from './dom.js';
+import { chooseDestination } from './views/destination.js';
 import { BlobByteSource } from '../core/bytes.js';
 import { inspectSource } from '../core/registry.js';
 import { PARSE_STATUS } from '../core/report.js';
@@ -22,6 +23,8 @@ import {
   createLibrary,
   LIBRARY_FILE_EXTENSION,
   LibraryFormatError,
+  APP_VERSION,
+  BUILD_DATE,
 } from '../store/schema.js';
 import {
   capabilities,
@@ -46,7 +49,7 @@ import {
 } from '../export/render.js';
 import { reportsToCsv, historyToCsv } from '../export/csv.js';
 import { textToPdfBlob } from '../export/pdf.js';
-import { renderReportCard } from './views/report-view.js';
+import { renderReportCard, renderBatchTable } from './views/report-view.js';
 import { decodeAndMeasure, decodeAvailability } from '../core/audio/decode.js';
 import { runRules } from '../core/qc/engine.js';
 import { renderClients } from './views/clients-view.js';
@@ -102,6 +105,17 @@ const actions = {
   },
 };
 
+/**
+ * Stamp the build into the header.
+ *
+ * Cheap, and it settles the question that otherwise costs a round trip: is
+ * this the new copy, or a stale folder, or Chrome serving cached modules?
+ */
+function renderBuildStamp() {
+  const host = $('#build-stamp');
+  if (host) host.textContent = `v${APP_VERSION} · build ${BUILD_DATE}`;
+}
+
 // ------------------------------------------------------------------- render
 
 function render() {
@@ -115,6 +129,7 @@ function render() {
   $('#view-help').hidden = state.view !== 'help';
 
   renderLibraryBar();
+  renderBuildStamp();
 
   if (state.view === 'inspect') renderInspect();
   if (state.view === 'clients') renderClients($('#clients-content'), { library: state.library, nav: state.nav, actions });
@@ -163,11 +178,16 @@ function renderInspect() {
   clear(results);
 
   $('#inspect-empty').hidden = state.reports.length > 0;
-  renderLogTargetSelect();
+  renderLogTarget();
 
   if (!state.reports.length) return;
 
-  if (state.reports.length > 1) results.append(batchSummary(state.reports));
+  if (state.reports.length > 1) {
+    results.append(batchSummary(state.reports));
+    // The table answers "which one"; the cards below answer "why". Clicking a
+    // row takes you from the first question to the second.
+    results.append(renderBatchTable(state.reports, { onPick: revealReport }));
+  }
 
   for (const report of state.reports) {
     results.append(
@@ -178,6 +198,20 @@ function renderInspect() {
       }),
     );
   }
+}
+
+/**
+ * Scroll to a file's report card and mark it, so the eye lands on the right
+ * one in a stack of two hundred.
+ */
+function revealReport(report) {
+  const card = document.getElementById(`report-${report.id}`);
+  if (!card) return;
+  const open = card.querySelector('details.detail-section');
+  if (open) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  else card.scrollIntoView({ block: 'start' });
+  for (const other of document.querySelectorAll('.report.targeted')) other.classList.remove('targeted');
+  card.classList.add('targeted');
 }
 
 /**
@@ -193,8 +227,11 @@ async function measureLevelsFor(report) {
     throw new Error('The original file is no longer available in this session. Check it again to measure its levels.');
   }
 
-  const stats = await decodeAndMeasure(file, report);
+  const { stats, tempo, key, loudness } = await decodeAndMeasure(file, report);
   report.audio = stats;
+  if (tempo) report.tempo.measured = tempo;
+  if (key) report.key = key;
+  if (loudness) report.loudness = loudness;
   report.observations = runRules(report);
 
   // A logged copy of this report should gain the levels too, if it is in the
@@ -205,10 +242,17 @@ async function measureLevelsFor(report) {
         for (const entry of project.log) {
           if (entry.report?.id === report.id) {
             entry.report.audio = stats;
+            if (tempo) entry.report.tempo.measured = tempo;
+            if (key) entry.report.key = key;
             entry.observations = report.observations.map((o) => ({
               id: o.id, ruleId: o.ruleId, severity: o.severity, title: o.title, detail: o.detail,
             }));
             entry.summary.peakDbfs = stats.peakDbfs;
+            if (tempo?.established) {
+              entry.summary.measuredBpm = tempo.bpm;
+              entry.summary.tempoConfidence = tempo.confidence;
+              entry.summary.tempoSteady = tempo.steady;
+            }
             actions.markDirty();
           }
         }
@@ -242,8 +286,11 @@ async function measureAllLevels() {
     try {
       const file = state.files.get(report.id);
       if (!file) throw new Error('file no longer available');
-      const stats = await decodeAndMeasure(file, report);
+      const { stats, tempo, key, loudness } = await decodeAndMeasure(file, report);
       report.audio = stats;
+      if (tempo) report.tempo.measured = tempo;
+      if (key) report.key = key;
+      if (loudness) report.loudness = loudness;
       report.observations = runRules(report);
     } catch {
       failed++;
@@ -301,33 +348,94 @@ function batchSummary(reports) {
   return panel;
 }
 
-function renderLogTargetSelect() {
-  const select = $('#log-project');
-  const previous = `${state.logTarget.clientId}|${state.logTarget.projectId}`;
-  clear(select);
-  select.append(el('option', { value: '', text: "Don't log — just show me" }));
+/**
+ * The line under the Check buttons, showing where the next import will be
+ * filed. It is a statement, not a control: the destination is chosen in the
+ * window that opens on import, so there is one place to set it rather than
+ * two that can disagree.
+ */
+function renderLogTarget() {
+  const host = $('#pick-target');
+  if (!host) return;
+  const { clientId, projectId } = state.logTarget;
+  const project = clientId && projectId && state.library
+    ? (() => {
+        try {
+          return { client: L.getClient(state.library, clientId), project: L.getProject(state.library, clientId, projectId) };
+        } catch {
+          // The project was deleted since it was chosen. Forget it rather than
+          // logging into something that no longer exists.
+          state.logTarget = { clientId: '', projectId: '' };
+          return null;
+        }
+      })()
+    : null;
 
-  if (state.library) {
-    for (const client of L.sortedClients(state.library)) {
-      if (!client.projects.length) continue;
-      const group = el('optgroup', { label: client.name });
-      for (const project of client.projects) {
-        group.append(el('option', { value: `${client.id}|${project.id}`, text: project.name }));
-      }
-      select.append(group);
-    }
-  }
-
-  select.value = [...select.options].some((o) => o.value === previous) ? previous : '';
-  if (select.value !== previous) state.logTarget = { clientId: '', projectId: '' };
+  host.textContent = !state.library
+    ? 'No library open — results are shown but not recorded. Open or start a library to keep a history.'
+    : project
+      ? `Results will be logged to ${project.client.name} › ${project.project.name}. You are asked on every import, and can check a one-off without filing it.`
+      : 'You are asked where to file the results on every import. A one-off check needs no project.';
 }
 
-$('#log-project')?.addEventListener('change', (e) => {
-  const [clientId = '', projectId = ''] = e.target.value.split('|');
-  state.logTarget = { clientId, projectId };
-});
-
 // ------------------------------------------------------------- inspect run
+
+/**
+ * Ask where an import should be filed and turn the answer into ids, creating
+ * the client or project if that is what was asked for.
+ *
+ * Returns null if the import was cancelled — the caller reads nothing at all
+ * in that case.
+ */
+async function resolveDestination(fileCount) {
+  // With no library there is nothing to choose between, and a window that asks
+  // nothing is just a click in the way of every import.
+  if (!state.library) return { clientId: '', projectId: '' };
+
+  const choice = await chooseDestination({
+    library: state.library,
+    fileCount,
+    current: state.logTarget,
+  });
+  if (!choice) return null;
+
+  if (choice.action === 'none') {
+    state.logTarget = { clientId: '', projectId: '' };
+    return { clientId: '', projectId: '' };
+  }
+
+  if (choice.action === 'existing') {
+    state.logTarget = { clientId: choice.clientId, projectId: choice.projectId };
+    return state.logTarget;
+  }
+
+  let createdClientId = null;
+  try {
+    if (!choice.clientId) createdClientId = L.addClient(state.library, choice.clientName).id;
+    const clientId = choice.clientId ?? createdClientId;
+    const project = L.addProject(state.library, clientId, choice.projectName);
+    actions.markDirty();
+    state.logTarget = { clientId, projectId: project.id };
+    return state.logTarget;
+  } catch (err) {
+    // Adding the project can fail after the client was added — a name that is
+    // only whitespace passes the form's `required` check but not the store's.
+    // Take the half-made client back out rather than leaving an empty client
+    // behind from an import that never happened.
+    if (createdClientId) {
+      try {
+        L.deleteClient(state.library, createdClientId);
+      } catch {
+        // Nothing useful to do; the toast below is still the right message.
+      }
+    }
+    // A duplicate name or an empty one. Say so and let the import be retried
+    // rather than checking the files into nowhere without mentioning it.
+    toast(`That project could not be created: ${err.message}`, 'error');
+    return null;
+  }
+}
+
 
 async function runInspection(entries, sourceLabel) {
   const audio = entries.filter(({ file, path }) => looksLikeAudio(path ?? file.name));
@@ -342,6 +450,11 @@ async function runInspection(entries, sourceLabel) {
     );
     return;
   }
+
+  // Ask where these go before a single byte is read, so the answer is given
+  // while the import is still in mind — and so cancelling costs nothing.
+  const destination = await resolveDestination(audio.length);
+  if (!destination) return;
 
   const progress = $('#progress');
   const fill = $('#progress-fill');
@@ -375,6 +488,15 @@ async function runInspection(entries, sourceLabel) {
     }
   }
 
+  // Second pass: decode what has to be decoded.
+  //
+  // An uncompressed file already produced its levels and its tempo from the
+  // scan above, with no decoding at all. A compressed one cannot: its samples
+  // do not exist until a decoder has made them. This is where the app stops
+  // being a pure reader, and it says so in the progress line rather than doing
+  // it quietly.
+  await decodePass(reports, { fill, text });
+
   fill.style.width = '100%';
   progress.hidden = true;
   text.textContent = '';
@@ -385,7 +507,7 @@ async function runInspection(entries, sourceLabel) {
     .join('  ·  ');
 
   // Log into the chosen project, if any.
-  const { clientId, projectId } = state.logTarget;
+  const { clientId, projectId } = destination;
   if (clientId && projectId && state.library) {
     try {
       L.addLogEntries(state.library, clientId, projectId, reports);
@@ -399,6 +521,47 @@ async function runInspection(entries, sourceLabel) {
 
   state.view = 'inspect';
   render();
+}
+
+/**
+ * Decode every file in a batch that needs decoding, folding levels and tempo
+ * into its report.
+ *
+ * A failure here is never fatal to the check. Everything else in the report was
+ * read from the file itself and stands on its own; a codec this browser will
+ * not decode costs the levels and the tempo, and nothing else.
+ */
+async function decodePass(reports, { fill, text }) {
+  const candidates = reports.filter((r) => decodeAvailability(r).offer);
+  if (!candidates.length) return;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const report = candidates[i];
+    fill.style.width = `${(i / candidates.length) * 100}%`;
+    text.textContent = `Decoding ${i + 1} of ${candidates.length} for levels and tempo: ${report.file.name}`;
+    await new Promise((r) => setTimeout(r, 0));
+
+    try {
+      const file = state.files.get(report.id);
+      if (!file) continue;
+      const { stats, tempo, key, loudness } = await decodeAndMeasure(file, report);
+      report.audio = stats;
+      if (tempo) report.tempo.measured = tempo;
+      if (key) report.key = key;
+      if (loudness) report.loudness = loudness;
+      report.observations = runRules(report);
+    } catch (err) {
+      // Record why, on the report, so the reader is not left wondering where
+      // the levels went.
+      report.tempo.measured = {
+        established: false,
+        bpm: null,
+        reason: `This file could not be decoded, so its tempo could not be worked out: ${err.message}`,
+        range: null,
+        limits: [],
+      };
+    }
+  }
 }
 
 // -------------------------------------------------------------------- files

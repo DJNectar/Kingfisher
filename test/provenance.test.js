@@ -13,6 +13,7 @@ import { inspectSource } from '../src/core/registry.js';
 import { analyseProvenance, provenanceSummary } from '../src/core/provenance/provenance.js';
 import { detectC2pa, isC2paUuid } from '../src/core/provenance/c2pa.js';
 import { renderFileReport } from '../src/export/render.js';
+import { createReport } from '../src/core/report.js';
 import * as F from './helpers/wav-fixtures.js';
 
 const inspect = (bytes, info = {}) =>
@@ -38,12 +39,14 @@ test('a generator named in an MP3 encoder field is reported as a claim', async (
 
   const obs = r.observations.find((o) => o.id === 'possible-ai-generated');
   assert.ok(obs, 'the flag should be raised');
-  assert.match(obs.title, /Possibly AI-generated/i);
-  // The reasons must be given, so the judgement can be checked.
+  // Naming the service settles it. Hedging here buried the clearest evidence
+  // a real Suno export carried, and the flag was read as a miss.
+  assert.match(obs.title, /made with Suno/i);
+  assert.equal(obs.severity, 'attention', 'a file naming its generator is not a footnote');
+  // The reasons must still be given, so the judgement can be checked.
   assert.match(obs.detail, /What raised this/i);
   assert.match(obs.detail, /names Suno/i);
-  // And it must never harden into a determination.
-  assert.doesNotMatch(obs.title, /^This (is|was) AI/i);
+  // Definite about what the FILE says, never about what Kingfisher proved.
   assert.match(obs.detail, /what the file says about itself|did not verify/i);
 });
 
@@ -275,24 +278,41 @@ test('a C2PA manifest declaring generative origin is the strongest signal', asyn
   assert.ok(a.limits.some((l) => /did not verify the signature/i.test(l)));
 });
 
-test('the flag is graded: a dedicated encoder field outranks free text', () => {
-  const inField = analyseProvenance({
-    format: {},
-    metadata: { id3v2: { frames: { TSSE: { value: 'Udio' } } } },
-  }).assessment;
-  assert.equal(inField.confidence, 'moderate');
-  assert.match(inField.headline, /Possibly AI-generated/i);
+test('naming a generative service settles it, wherever the name appears', () => {
+  // These names are not words that turn up in audio metadata by accident, so
+  // which field carries one does not change what it means.
+  for (const metadata of [
+    { id3v2: { frames: { TSSE: { value: 'Udio' } } } },
+    { id3v2: { frames: { COMM: { value: 'sounds a bit like udio to me' } } } },
+    { info: { ICMT: { value: 'udio' } } },
+  ]) {
+    const assessment = analyseProvenance({ format: {}, metadata }).assessment;
+    assert.equal(assessment.flag, 'declared', JSON.stringify(metadata));
+    assert.match(assessment.headline, /made with Udio/i);
+  }
+});
 
-  const inComment = analyseProvenance({
+test('the four tool names that are also ordinary words stay graded', () => {
+  // "boomy" is what an engineer calls too much low end; "bark" is a dog. These
+  // cannot carry the certainty the other names do without inventing confident
+  // false positives.
+  const loose = analyseProvenance({
     format: {},
-    metadata: { id3v2: { frames: { COMM: { value: 'sounds a bit like udio to me' } } } },
+    metadata: { info: { ICMT: { value: 'the low end is a bit boomy' } } },
   }).assessment;
-  assert.equal(inComment.confidence, 'weak');
-  assert.match(inComment.headline, /Faint signs/i);
+  assert.equal(loose.confidence, 'weak');
+  assert.match(loose.headline, /Faint signs/i);
   assert.ok(
-    inComment.reasons.some((r) => /free-text/i.test(r.detail ?? '')),
-    'free text should be marked as weaker evidence',
+    loose.reasons.some((r) => /ordinary word/i.test(r.detail ?? '')),
+    'an ambiguous name must say why it is being discounted',
   );
+
+  // But the same name in a field meant for recording software does count.
+  const named = analyseProvenance({
+    format: {},
+    metadata: { id3v2: { frames: { TSSE: { value: 'Boomy' } } } },
+  }).assessment;
+  assert.equal(named.confidence, 'moderate');
 });
 
 test('AI-assisted processing does NOT raise the AI-generated flag', async () => {
@@ -322,6 +342,9 @@ test('a generative phrase in a real comment frame is picked up', async () => {
 
   assert.match(r.metadata.id3v2.frames.COMM.value, /ai-generated/);
   const a = r.provenance.assessment;
+  // A phrase is not a named service: "AI-generated" in a comment is a strong
+  // hint, not the file naming what made it. That distinction is the reason
+  // naming a service is treated as settling the question and this is not.
   assert.equal(a.flag, 'possible');
   assert.ok(a.reasons.some((x) => /"AI-generated"/i.test(x.text)));
 });
@@ -393,17 +416,17 @@ test('a logged check carries its origin finding in the summary, not only in the 
 
   // The summary is what list views and the history CSV read, so the flag has
   // to be there and not only inside the stored report.
-  assert.equal(entry.summary.originFlag, 'possible');
-  assert.equal(entry.summary.originConfidence, 'moderate');
-  assert.match(entry.summary.originHeadline, /Possibly AI-generated/i);
+  assert.equal(entry.summary.originFlag, 'declared');
+  assert.equal(entry.summary.originConfidence, 'declared by the file');
+  assert.match(entry.summary.originHeadline, /made with Suno/i);
   assert.equal(entry.summary.hasContentCredentials, false);
 
   // And it survives a save and reopen.
   const { serializeLibrary, parseLibrary } = await import('../src/store/schema.js');
   const reopened = parseLibrary(serializeLibrary(lib));
   const reopenedEntry = reopened.clients[0].projects[0].log[0];
-  assert.equal(reopenedEntry.summary.originFlag, 'possible');
-  assert.equal(reopenedEntry.report.provenance.assessment.flag, 'possible');
+  assert.equal(reopenedEntry.summary.originFlag, 'declared');
+  assert.equal(reopenedEntry.report.provenance.assessment.flag, 'declared');
 });
 
 test('an ordinary file logs a null origin flag, never a reassuring one', async () => {
@@ -446,8 +469,8 @@ test('CSV export carries the origin columns, and leaves them blank when nothing 
   assert.deepEqual(duplicates, [], 'CSV column names must be unique');
 
   const col = (row, name) => parseCsvRow(row)[header.indexOf(name)];
-  assert.equal(col(rows[1], 'Origin flag'), 'possible AI generation');
-  assert.equal(col(rows[1], 'Origin confidence'), 'moderate');
+  assert.equal(col(rows[1], 'Origin flag'), 'declares AI generation');
+  assert.equal(col(rows[1], 'Origin confidence'), 'declared by the file');
   assert.equal(col(rows[1], 'Tools named'), 'Suno');
   assert.match(col(rows[1], 'Origin reasons'), /names Suno/);
 
@@ -478,8 +501,8 @@ test('history CSV keeps the origin columns for a summary-only entry', async () =
   const cells = parseCsvRow(rows[1]);
 
   assert.equal(cells[header.indexOf('File')], 'old.mp3');
-  assert.equal(cells[header.indexOf('Origin flag')], 'possible AI generation');
-  assert.match(cells[header.indexOf('Origin headline')], /Possibly AI-generated/i);
+  assert.equal(cells[header.indexOf('Origin flag')], 'declares AI generation');
+  assert.match(cells[header.indexOf('Origin headline')], /made with Udio/i);
 });
 
 /** Minimal CSV row parser, matching the one in export.test.js. */
@@ -500,3 +523,72 @@ function parseCsvRow(row) {
   out.push(cur);
   return out;
 }
+
+// ------------------- judged on what the field says, not only which field
+
+/**
+ * From a real Suno export. The comment field read:
+ *
+ *   made with suno; created=2026-04-20T22:19:02Z; id=808f7fb4-5aaa-...
+ *
+ * An earlier version scored this "weak — free text, so it may be describing
+ * the audio rather than recording what made it", and filed the clearest
+ * evidence in the file under "worth noting". Nobody describing a track writes
+ * a UUID.
+ */
+const SUNO_WAV_COMMENT = 'made with suno; created=2026-04-20T22:19:02Z; id=808f7fb4-5aaa-490e-9c2c-fd2d4b446a57';
+
+function withComment(text) {
+  const report = createReport({ name: 'take.wav', path: 'take.wav', size: 100 });
+  report.parse.status = 'ok';
+  report.parse.parser = 'wav';
+  report.metadata.info = { ICMT: { value: text } };
+  return analyseProvenance(report).assessment;
+}
+
+test('provenance: a machine-written provenance record is definite', () => {
+  const assessment = withComment(SUNO_WAV_COMMENT);
+  assert.equal(assessment.flag, 'declared');
+  assert.match(assessment.headline, /made with Suno/i);
+  const detail = assessment.reasons.map((r) => r.detail).join(' ');
+  assert.match(detail, /made with Suno/i);
+  assert.match(detail, /timestamp/i);
+  assert.match(detail, /generation id/i);
+});
+
+test('provenance: a Suno mention is definite however it is phrased', () => {
+  // "If there is mention of Suno, it is AI. Period." The name is not a word
+  // that turns up in audio metadata by accident, so the phrasing around it
+  // does not change what it means.
+  for (const text of [
+    SUNO_WAV_COMMENT,
+    'made with suno',
+    'suno',
+    'sounds a bit like suno to me',
+  ]) {
+    assert.equal(withComment(text).flag, 'declared', text);
+  }
+});
+
+test('provenance: authorship and machine marks still show as supporting detail', () => {
+  // They no longer decide the grade, but they are why the reader should
+  // believe it, so they must still appear.
+  const detail = withComment(SUNO_WAV_COMMENT).reasons.map((r) => r.detail).join(' ');
+  assert.match(detail, /made with Suno/i);
+  assert.match(detail, /timestamp/i);
+  assert.match(detail, /generation id/i);
+});
+
+test('provenance: an ordinary-word tool name in free text is still discounted', () => {
+  const assessment = withComment('the low end is a bit boomy');
+  assert.equal(assessment.confidence, 'weak');
+  assert.match(assessment.reasons[0].detail, /ordinary word/i);
+});
+
+test('provenance: an ISO timestamp is seen despite its uppercase T', () => {
+  // Phrase matching lowercases the text, which turns the "T" between date and
+  // time into "t" and stopped the timestamp being recognised at all.
+  const detail = withComment('made with suno; created=2026-04-20T22:19:02Z')
+    .reasons.map((r) => r.detail).join(' ');
+  assert.match(detail, /timestamp/i);
+});

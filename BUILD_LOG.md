@@ -200,11 +200,6 @@ fragile of the two. Full run, all passing:
 - **AIFF/FLAC/MP3.** Architected for (magic-number registry, format-agnostic
   report model, endianness flag already on `Reader`) but not implemented. The
   brief asked for WAV first and for the architecture not to require a rewrite.
-- **True-peak (inter-sample) measurement.** Needs oversampling; the current
-  peak is sample-peak and is labelled as such rather than implying more.
-- **Loudness (LUFS) measurement.** `bext` loudness fields are *read and shown*
-  where present, but nothing is measured — that needs a K-weighting filter and
-  gating, and guessing at it would violate the app's core rule.
 - **RIFX (big-endian RIFF).** Detected and explicitly refused rather than
   misread. Supporting it is a flag on `Reader`, but there was no reference file
   to verify against, and shipping unverified byte-order handling is exactly how
@@ -513,3 +508,413 @@ in any browser, whereas AAC is absent from open-source Chromium builds.
 - [x] UI: inspect, batch, client roster, project log, to-dos, help tab
 - [x] 65 unit tests + a full end-to-end browser run, all passing
 - [x] ARCHITECTURE.md, README.md, in-app help
+
+---
+
+## Session 6 — what the screen shows, and where an import gets filed
+
+### The exported report was fuller than the screen
+Running a real MP3 through the app turned up data present in the .txt and .pdf
+but absent from the web display. A programmatic diff — the text report against
+the live DOM with every `<details>` forced open — found the collapsing was only
+half of it. Five items were genuinely missing even when expanded:
+
+23. **"Fully read" was never shown.** `.parse-banner.ok { display: none }` meant
+    a file that read perfectly produced no statement at all. Silence is the one
+    thing a report must not say: it leaves the reader unable to tell a pass from
+    a check that never ran. The export states it plainly, so the screen does too.
+24. **Channel layout** (FL, FR, and where the layout came from) — absent.
+25. **Bit depth** showed "not applicable" without the reason.
+26. **Container form** — "bare frame stream" — absent.
+27. **File size** gave "10.3 MB" and never the exact byte count.
+
+Technical details now mirrors the exported FORMAT section row for row, and
+imports `codecText`/`bitDepthText` from the export renderer rather than
+re-phrasing them. Two wordings for one fact is a drift waiting to happen.
+
+Sections now open by default, with an Expand all / Collapse all toggle that
+remembers the choice.
+
+### Where does this import go?
+A dropdown beside the Check button only works if you notice it before you
+click. By the time the results are on screen the choice has been made for you,
+and the checks are logged nowhere. So the question is now asked at the moment
+of import, before a single byte is read:
+
+- **Just this once — don't log it**, which is what the window leads with and
+  selects by default
+- an existing project, listed under the client it belongs to
+- a new project — under an existing client, or a brand new client named right
+  there in the same window
+
+Filing is optional and the one-off comes first on purpose. Checking a file
+someone has sent over is a one-off far more often than it is the start of a
+project, and a window that leads with paperwork is a window that gets clicked
+through. A project is pre-selected only when one is genuinely in hand: the
+project you came in from, or the one the last import went to.
+
+`chooseDestination()` resolves to a plain descriptor and never touches the
+library itself; creating a client or project is a change to the document that
+has to be marked dirty and saved, and that belongs with the rest of the app's
+mutations rather than hidden inside a dialog. If the project cannot be created
+after the client was (a name that is only whitespace passes the form's
+`required` check but not the store's), the half-made client is taken back out
+rather than left behind by an import that never happened.
+
+With no library open the window is skipped entirely: there is nothing to
+choose between, and a dialog that asks nothing is just a click in the way of
+every import. The line under the Check buttons says so instead.
+
+The old `#log-project` select is gone — one place to set the destination rather
+than two that can disagree. The line under the Check buttons now just states
+where the next import will be filed.
+
+The **Clients** tab is now **Projects**, which is what people go there for; its
+roster heading reads "Projects by client", so the tab and the page agree.
+
+**45 browser assertions, all passing. 166 unit tests, all passing.**
+
+---
+
+## Session 7 — tempo, and the cost of calibrating on synthetic audio
+
+The first number in Kingfisher that is **worked out rather than read**. Every
+other value is in the file somewhere; this one is an opinion about it, and can
+be plausibly wrong in a way a header field cannot. So it is shaped as an
+estimate throughout — its own confidence, its own precision, the half-time or
+double-time reading, and a plain statement that it is not a stored value.
+
+Three failures, each of which produced a confident wrong answer.
+
+28. **160 and 174 BPM came back at exactly half.** It looked like the perceptual
+    prior. It was not. At 100 onset readings a second, a beat period of 37.5
+    frames fits no whole autocorrelation lag; the grid drifts a little further
+    out of step with every beat and the correlation at the true tempo collapses
+    to 0.72, while its half sits on exactly 75 frames and scores 0.99. A
+    property of the instrument, not the music, and the kind of error that looks
+    like a plausible answer. Doubling the frame rate and widening the onset
+    peaks lifts the true tempo back above its half at every tempo tested — now
+    within 0.05 BPM from 60 to 174.
+
+29. **Pure noise was rated a confident 84 BPM.** Peak prominence was being
+    measured on the prior-weighted score, so the prior was manufacturing its own
+    evidence: it built the peak and was then credited for finding it. Now
+    measured on the raw correlation.
+
+30. **And then the noise fixture turned out not to be noise.** The detector found
+    a genuine periodicity at 84.3 with harmonics at 42.2 and 126 — which is a
+    linear congruential generator's lattice structure, framed up at 200 frames a
+    second. The fixture was lying, not the code. Replaced with splitmix32, and a
+    sustained drone added as the honest no-tempo case.
+
+### Calibrating on synthetic audio nearly shipped a useless feature
+The establish-or-refuse threshold was set from click tracks and a drone, where
+the separation is obvious: 0.97 against 0.15. On the first real recording —
+a live band, five and a half minutes — that threshold **refused to give a tempo
+at all**.
+
+The recording correlates at 0.28. Only twice a drone. And yet fifty-two
+independent windows all placed it within 10% of 150 BPM, which is about as
+convincing as evidence gets. Real music is nowhere near as periodic as a click
+track and is still perfectly trackable.
+
+| material | correlation | window agreement |
+|---|---|---|
+| click track | 0.97 | 1.00 |
+| click track speeding up | 0.74 | 1.00 |
+| abrupt tempo change | 0.95 | 0.63 |
+| **live rock band, real** | **0.28** | **1.00** |
+| sustained drone | 0.15 | 1.00 |
+| noise | 0.06 | 0.13 |
+
+Neither measure works alone — the drone agrees perfectly on a tempo no listener
+would hear — so both now have to hold. The thresholds come from five synthetic
+signals and one real recording, which is enough to catch these failures and not
+enough to call them tuned. The source says so.
+
+### Two decisions the user made, and what they cost
+**Automatic on every file.** Tempo was to run without being asked. For
+uncompressed audio that is free — the samples are already being walked to
+measure levels, so the onset signal rides along and a WAV is never decoded. For
+compressed audio there is no route to samples except the decoder, so MP3s and
+AACs are now decoded as part of checking them. That contradicted "this app never
+decodes audio unless you ask", which was written into the README, the Help tab
+and `decode.js` itself. All of it was corrected rather than left saying
+something that had stopped being true.
+
+**Tile plus section.** The tile sits in a row of facts read out of the file, so
+it always says "estimated" and how far to trust it — otherwise it would be taken
+for one of them.
+
+### "Could also be 75 BPM" was confusing, and was
+Caught by the user reading the raw output. It sounds like the app is torn
+between two answers; it is not, it is the same pulse counted in half-time. Now
+said that way, and only above 140 or below 80 where a listener might genuinely
+count differently. At 120 it says nothing.
+
+**Also:** a file's *stated* tempo — ID3 `TBPM`, MP4 `tmpo`, Vorbis `BPM`, the
+ACID chunk — is now read and shown beside the measured one. They are never
+merged and neither corrects the other; where they disagree the report says so
+and leaves it there. A BPM tag of 0 is treated as "not set" rather than reported
+as a tempo of zero, for the same reason blanks are never written as numbers.
+
+**52 browser assertions, all passing. 207 unit tests, all passing.**
+
+---
+
+## Session 8 — key goes live, and Suno settles the AI question
+
+### "If there is mention of Suno, it is AI. Period."
+The user's own Suno export, which they reported as a miss. It was not a miss —
+the flag was raised — but it read as one, and fairly:
+
+    [Worth noting] Faint signs of AI generation
+    Confidence: weak
+
+The file's comment field said:
+
+    made with suno; created=2026-04-20T22:19:02Z; id=808f7fb4-5aaa-...
+
+31. **The weight came from which FIELD held the name, not from what the field
+    said.** `ICMT` is not a dedicated software field, so anything in it was
+    "free-text, so it may be describing the audio rather than recording what
+    made it". Reasonable for a comment reading "sounds like Suno". Absurd for
+    one carrying a generation id — nobody describing a track writes a UUID.
+
+Naming a generative service is now the file declaring how it was made: flag
+`declared`, headline "This file says it was made with Suno", and the
+observation raised from *worth noting* to *needs a look*.
+
+**Four of the thirty-four names are also ordinary words** — `boomy` is what an
+engineer calls too much low end, `loudly` is an adverb, `bark` is a dog,
+`jukebox` is a venue. Those keep the graded treatment. Applying the rule to
+them would manufacture confident false positives on exactly the free-text
+comments an engineer writes.
+
+A generative *phrase* with no service named stays "possible": "AI-generated" in
+a comment is a strong hint, not the file naming what made it.
+
+32. **A bug inside the fix.** Phrase matching lowercases the text, which turns
+    the `T` between date and time in an ISO timestamp into `t`, so the
+    timestamp was never recognised. Marks are now matched against the original
+    text, where case carries meaning.
+
+### Key, shipped on the evidence rather than on hope
+Wired in after the verification work settled what it can and cannot do.
+Measured by transposing a real recording through all twelve semitones:
+
+    note collection follows the transposition   8/10
+    tonal centre follows the transposition      1/10
+
+So the report is built around that split. The **notes lead** — "B♭ C D E♭ F G A
+(2 flats)" — the likely key follows as a best guess, and every key sharing
+those notes is named beside it. The tile shows the centre with "or F
+Mixolydian — same notes" underneath rather than a bare name.
+
+Uncompressed files never get decoded for it: the chromagram is built a sample
+at a time during the level scan, and only the twelve-value frames are kept —
+about ten a second, so a whole album's chromagram is smaller than a second of
+its audio. Compressed files get it from the decode that already happens.
+
+A file read in probes rather than end to end reports no key and says why, for
+the same reason it reports no tempo: the joins between probes are jump cuts,
+and the gaps between them are not time.
+
+**Still true and worth repeating:** the thresholds rest on one real recording.
+The transposition and degradation tests prove the machinery tracks pitch and
+survives drums, noise and clipping. Neither proves a hit rate.
+
+**237 unit tests, 52 browser assertions, all passing.**
+
+---
+
+## Loudness: the first measurement with an actual right answer
+
+LUFS, loudness range and true peak had been deferred twice on the grounds that
+they were real DSP. They were also the reason a delivery engineer would not
+take the app seriously: peak tells you whether a file clips and almost nothing
+about how loud it sounds, and every delivery spec that exists is written in
+LUFS.
+
+What made this different from tempo and key is that **it can be checked**. EBU
+Tech 3341 and 3342 publish test signals together with the reading a conforming
+meter must produce. Tempo had to be verified sideways, by transposing audio and
+watching the answer move; key by wrecking known material and seeing what
+survived. Loudness has ground truth, so it is tested against it: all nine
+compliance cases — the two calibration tones, the absolute-gate and
+relative-gate sequences, the near-the-gate trap, and the four range cases —
+plus true-peak signals whose inter-sample maxima are known analytically.
+
+All nine passed on the first run, which was suspicious enough to go looking.
+They passed because the filter is derived rather than copied: BS.1770 tabulates
+K-weighting coefficients for 48 kHz only, and using those at 44.1 kHz — the
+rate most music actually arrives at — puts the filter's corners in the wrong
+place and biases every reading. Deriving the analogue prototype through the
+bilinear transform per sample rate reproduces the published table exactly at 48
+kHz, which is what the test asserts.
+
+33. **Four times oversampling is not limited by the filter.** The first
+    true-peak implementation was tuned by comparing interpolator designs — 12,
+    16, 24, 32 taps per phase, Kaiser betas from 6 to 12 — and every single
+    design bottomed out at exactly the same worst-case error of -0.301 dB.
+    An error that ignores the filter entirely is not a filter error. -0.301 dB
+    is cos(pi/12), and pi/12 is half the spacing of a four-times grid at 16 kHz
+    in a 48 kHz file. The limit was never the reconstruction; it was that the
+    reconstructed curve was only being LOOKED AT four times per sample, so a
+    peak falling between two of those points was missed.
+
+    Eight times cuts that to 0.07 dB. Under-reading is the dangerous direction
+    here — it hides an over rather than inventing one — so the extra pass is
+    worth paying for. It costs about what tempo already costs on the same
+    audio, which was the bar it had to clear.
+
+34. **A test caught the case its own comment predicted.** "True peak never
+    reads below the sample peak" looked like a formality: the reconstructed
+    waveform passes through every sample, so it cannot be quieter than the
+    loudest of them. At 15 kHz it failed, reading -6.033 against a sample peak
+    of -6.000.
+
+    The polyphase grid lands at fixed fractional offsets between one sample and
+    the next, and none of those offsets is zero — it never evaluates the curve
+    at a sample instant at all. Near the top of the band, where a cycle spans
+    three or four samples, that is enough to report a peak below a sample the
+    curve demonstrably passes through. The samples are exact points on the same
+    curve, so they are folded into the maximum. Not a fudge: using known exact
+    values of the thing being estimated.
+
+    A true peak under the sample peak is not a rounding question. It is
+    impossible, and printing it would undermine the single comparison the whole
+    measurement exists to support.
+
+35. **A jump cut reconstructs as a spike.** Very large files are read as
+    evenly spaced probes rather than end to end, and tempo and key already
+    refuse that input because the joins between probes are not time. Loudness
+    refuses it too, and for a second reason of its own: the seam between two
+    probes is a step discontinuity, and an oversampling true-peak detector
+    rings on a step. It would report an inter-sample over that exists nowhere
+    in the audio — only in the join between two pieces of it.
+
+**And still no targets.** This was the most tempting place in the app to break
+its own rule, because everyone knows what Spotify wants and it would have been
+one line. The report says -9.4 LUFS, 6.1 LU, +0.8 dBTP and stops. A test
+asserts that the loudness result contains no platform name, no "too loud", no
+target and no verdict, alongside the older test that holds every observation
+rule to the same standard.
+
+**270 unit tests, 65 browser assertions, all passing.**
+
+---
+
+## A launch screen, and a table for looking across a batch
+
+36. **The launch screen has no JavaScript behind it, on purpose.** It runs on a
+    fixed CSS timeline and clears itself, so a module that fails to load cannot
+    strand somebody behind a bird. It is also `pointer-events: none` for its
+    whole life: the app underneath is live and clickable from the first frame,
+    so the splash covers the wait rather than causing one. It ends at
+    `visibility: hidden`, which takes it out of hit testing and the
+    accessibility tree instead of leaving an invisible sheet over the page.
+
+37. **The batch table's sort rule is the app's own rule, applied to a
+    comparator.** A hundred files rendered as a hundred cards is a scroll, not
+    a view, and the question at intake is comparative — so: one row per file,
+    click a column to sort, click a row to jump to the card.
+
+    The part worth recording is what "unknown is null, never zero" means when
+    you are sorting rather than displaying. The obvious implementation lets
+    null fall through to a numeric comparison, which makes it zero, and a file
+    whose loudness could not be measured then wins "quietest first". That file
+    is not quiet. It has no answer, and ranking it as the quietest would be the
+    table inventing a measurement the report had just refused to make — the
+    same mistake the whole app exists to avoid, committed by a comparator
+    instead of a parser.
+
+    So an unknown sinks to the bottom in BOTH directions, and a test asserts it
+    both ways round, including for the `-Infinity` that digital silence
+    genuinely measures.
+
+    The column definitions and the comparator live in their own module with no
+    `document` in sight, for the same reason `measure.js` does: it means the
+    sorting rules are tested under `node --test` even though the table they
+    build cannot be.
+
+**289 unit tests, 90 browser assertions, all passing.**
+
+---
+
+## The dominant is not home
+
+Chris, reading a report on one of his own tracks: *"Kingfisher likes to talk
+about G Mixolydian, but in standard popular music that would be rare."* He was
+right, and the reason turned out to be structural rather than a tuning slip.
+
+38. **The dominant is over-represented in every major key, so the detector
+    kept electing it.** G is the fifth of C, the root of V and the fifth of
+    iii. Measured on a textbook I-IV-V-I in C major, G carries MORE chroma
+    than C does - 28.0% against 23.0%. Music that resolves home survives this
+    because the ending gives the tonic away. Music that vamps, fades out or
+    simply stops on the V does not, and gets named as the Mixolydian mode of
+    its own fifth.
+
+    The reproduction was unambiguous: a progression built from C, G, F and G
+    triads came back **G Mixolydian at high confidence, with C major not even
+    offered as an alternative.**
+
+    This exact failure had been found once before, in the fixtures, and the
+    note in `key-fixtures.js` still describes it - *"three keys came back as
+    the Mixolydian mode of their own fifth"*. It was fixed by making the
+    fixtures resolve home. The detector was never fixed, and real records do
+    not all resolve. A fixture change had hidden a bug rather than removing it.
+
+39. **Two of the cases are genuinely indistinguishable, and that decided the
+    fix.** A C major vamp stopping on the dominant and a real G Mixolydian
+    vamp measure within 0.1% of each other on every piece of evidence a
+    chromagram carries. What separates them is harmonic function, which is not
+    in the signal. No amount of tuning separates what the evidence does not.
+
+    When the evidence cannot decide, what settles it is which reading is more
+    common - and in popular music major and minor outnumber the modes by more
+    than an order of magnitude. So the modes now carry a prior and must win
+    clearly rather than narrowly. The same move the tempo estimator already
+    makes with its 120 BPM perceptual prior, for the same reason.
+
+    The weight was swept, not guessed, and the window is narrow: above ~0.55
+    the bug survives; below ~0.52 a genuinely modal progression stops
+    surviving transposition, because resampling smears the chroma and the
+    prior tips it into the relative major. 0.53 sits in the middle. Worth
+    knowing that the lower bound comes from DEGRADED audio rather than real
+    music, so the practical window is probably wider than the measured one.
+
+40. **A modal answer now always names its relative, and is never called
+    high confidence.** Even where the mode is the better reading, C major is
+    named beside G Mixolydian - because stating the rarer of two readings the
+    analysis cannot separate, without naming the likelier one, is the kind of
+    confident wrong answer this app exists to avoid.
+
+41. **Three existing tests had to be rewritten, because they encoded the
+    symptom as the specification.** They asserted that a clean I-vi-IV-V
+    *should* read as ambiguous with G Mixolydian among its alternatives. That
+    was only ever true because of the bias. Their intent was sound, so they
+    were re-pointed at material that is genuinely ambiguous, and tests were
+    added for the case that was broken.
+
+### ISRC, and a tag that means something else
+
+42. **In RIFF, the four characters `ISRC` do not mean ISRC.** They mean
+    **Source** - where the material came from - and have done since long
+    before recording codes were common in files. A WAV whose INFO block reads
+    `ISRC=Recorded at Abbey Road` is correctly filled in.
+
+    So the resolver validates rather than reads. An ISRC has a fixed shape
+    (CC-XXX-YY-NNNNN), which turns a guess into a test: prose in that field is
+    refused, a real code in that same field is accepted, and a dedicated tag
+    elsewhere wins over it either way. The report says which field the code
+    came out of, because with one ambiguous source in the list that is worth
+    stating.
+
+    It now sits with the headline facts, in the batch table and in the CSV,
+    rather than inside a tag list - it is the identity of the recording, not a
+    detail about the file, and at delivery it is checked more than anything
+    else in the report.
+
+**299 unit tests, 90 browser assertions, all passing.**
