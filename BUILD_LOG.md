@@ -1154,10 +1154,10 @@ about the severity of the true-peak bug, and the correction was right.
     The error is real and one-sided: the interpolator could only under-read,
     never over-read. But the reported maximum changes only when the
     un-evaluated tail holds a peak larger than the largest already found
-    everywhere else in the file. A track whose loudest moment is in the middle
-    - which is most tracks - reports the same figure before and after. The
-    2.5 dB is one constructed case, chosen to isolate the mechanism, and is
-    neither typical nor a proven worst case.
+    everywhere else in the file. A track whose loudest moment is anywhere but
+    the final samples reports the same figure before and after. The 2.5 dB is
+    one constructed case, chosen to isolate the mechanism, and is neither
+    typical nor a proven worst case.
 
     Worth recording as its own entry rather than a quiet edit, because the
     failure is a specific one: having found a real bug and built a correct
@@ -1166,3 +1166,107 @@ about the severity of the true-peak bug, and the correction was right.
     says nothing on its own about how often it bites.
 
 **322 unit tests, 90 browser assertions, all passing.**
+
+---
+
+## Session 8 — 2026-09-25 — third pass: the consumers
+
+The reviewer audited the consumers of every field the last two sessions made
+nullable, and found five more. All five reproduced. Four are readers; one is
+older than any of this work and is the most serious thing found in three
+rounds.
+
+### The pattern, exhausted
+
+55. **Three rounds, one mistake, three altitudes.** Session 6 made fields
+    nullable and missed four readers. Session 7 fixed those four and missed
+    five more. The five were not in the same places, and that is the point:
+
+    - **F1** was the *aggregate* of a nullable field. `channels.every(c =>
+      c.digitalSilence === true)` answers false for unknown exactly as
+      readily as for known-not-silent, so a file with one silent channel and
+      one unreadable one exported "All silent: no" and said the silent channel
+      was silent "while the others carry audio". Nothing readable in that file
+      is non-zero.
+    - **F2** was a *producer*, not a reader: CAF collapsed declared and
+      available size into one number at the point of reading, so the finalizer
+      added in session 7 had no evidence left to act on. Session 7's note that
+      "the container formats already express this as shortfall" was true of
+      WAV and AIFF and not of CAF, and I did not check.
+    - **F3** was *serialisation*, which is a reader of every field at once.
+    - **F4** was the *position* of a column, not its value.
+    - **F5** and **F6** were sentences: `undefined sample frames`, and
+      `toFixed` on a null in a success message.
+
+    Each round I fixed the class I had just been shown and did not look one
+    level out from it. The general lesson is not "check the readers" - it is
+    that a type change has a blast radius the type system here cannot show,
+    and the only reliable way to find its edge is to have somebody else walk
+    it.
+
+### The one that predates all of this
+
+56. **Saving a library turned known silence into unknown.** JSON cannot
+    represent -Infinity, and `JSON.stringify` does not fail on it - it writes
+    `null` and says nothing. -Infinity dBFS is not a missing reading; it is
+    the established value for digital silence. So every save-and-reopen
+    converted a measurement into a gap: peak, RMS, the per-channel figures and
+    the loudness true peak, on screen, in the text report, and as a blank CSV
+    cell where there had been an explicit `-inf`.
+
+    This has been true since the library was written. It survived a passing
+    round-trip test, because that test checked the structure came back, not
+    that the numbers in it did. It surfaced only because the review went
+    looking for consumers of newly-nullable fields and found one that had been
+    destroying a never-nullable one all along.
+
+    Non-finite numbers are now written as a tagged object and restored on
+    read - tagged rather than the string "-Infinity", because file names,
+    client names and metadata are free text and one of them could legitimately
+    be that word. Libraries written before this keep their nulls; those
+    readings are gone and nothing can recover them.
+
+    Worth its own entry because of how it was found. The bug was not in any
+    line this project changed. It was exposed by asking a consistent question
+    about a different change, which is an argument for the audit rather than
+    for the fix.
+
+### Two things deliberately not done
+
+57. **Whole-file DSP abandonment stays as it is.** The reviewer agreed:
+    restarting the filters after an invalid sample silently changes the
+    programme being measured, and a three-hour result covering only part of a
+    file is useful only as an explicitly partial result, with coverage and
+    omitted intervals disclosed. It must not occupy the unqualified whole-file
+    field. Recorded in `ROADMAP.md` as a designed feature, not a patch.
+
+58. **The LFE case is a real over-correction, and is deferred anyway.** A 5.1
+    file whose LFE holds one NaN reports no integrated loudness, although LFE
+    carries zero BS.1770 weight and the contributing channels are untouched.
+    Clean, that fixture measures -15.0448 LUFS; with the bad LFE sample it
+    measures nothing. The reviewer is right that integrated loudness could
+    legitimately stay established while whole-file true peak goes unknown.
+
+    Not fixed here because it is not the same shape as the other repairs: it
+    splits one refusal into per-figure refusals and needs the weighted path to
+    stop evaluating an excluded channel into `0 * NaN`. Doing that at the end
+    of a repair round, on the strength of one fixture, is how the last two
+    rounds of follow-ups got created. Recorded in `ROADMAP.md` with the
+    evidence.
+
+### Corrections carried
+
+59. **Entry 54's "which is most tracks" is removed.** The conditional
+    statement stands - a track whose loudest moment is anywhere but the final
+    samples reports the same true peak before and after the drain fix - but
+    the claim about how many tracks that describes was not measured here and
+    is gone. Second time in two rounds that I have attached an unmeasured
+    population claim to a correct mechanism.
+
+    The reviewer independently validated the true-peak repair against direct
+    full convolution: 200 deterministic cases, three channels, five sample
+    rates from 8 to 192 kHz, maximum difference 0 dB. That validates the
+    implementation against its own finite interpolator, which is the claim
+    being made, and not against every conceivable continuous reconstruction.
+
+**334 unit tests, 90 browser assertions, all passing.**

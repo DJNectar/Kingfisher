@@ -15,7 +15,7 @@ per-client work history, and exports in four formats.
 |---|---|
 | `main` | current; everything below has landed |
 | Pull requests | [#1](https://github.com/DJNectar/Kingfisher/pull/1) and [#2](https://github.com/DJNectar/Kingfisher/pull/2), both merged |
-| Unit tests | 322, all passing (GitHub Actions runs them on every push) |
+| Unit tests | 334, all passing (GitHub Actions runs them on every push) |
 | Browser tests | 90 assertions, all passing |
 | Packaging | a macOS `.app` builds from `packaging/`, and passes the browser suite |
 
@@ -118,6 +118,8 @@ fixtures it was calibrated on.
 
 | Item | Why not done |
 |---|---|
+| **Partial DSP measurement after an invalid sample** | One non-finite sample currently abandons loudness, tempo and key for the whole file, because a biquad carries its state forward and everything after the bad sample is meaningless. Measuring the rest is possible but is a feature, not a patch: it needs filter-state restart, defined settling and boundary handling, exclusion of windows crossing the invalid span, gating over eligible block powers rather than averaged segment LUFS, and a disclosed list of valid segments. A partial result must not occupy the unqualified whole-file field. Reviewed and deferred deliberately. |
+| **Loudness when only an excluded channel is damaged** | A 5.1 file whose LFE holds one NaN currently reports no integrated loudness, although LFE carries zero weight in BS.1770 and the contributing channels are untouched. Integrated loudness could legitimately stay established while whole-file true peak goes unknown. Raised with independent evidence by the third-pass review, agreed as correct in principle, and deferred: it needs the weighted path to avoid evaluating an excluded channel into `0 * NaN`, and it splits one refusal into per-figure refusals, which is a wider change than this round's repairs. |
 | **Key accuracy on real records** | Unverified, and the app says so. The transposition and degradation tests prove the machinery tracks pitch and survives drums, noise and clipping; neither produces a hit rate. Note collection measured 8/10 on transposition, tonal centre 1/10 — which is why the collection leads the reporting and the centre is offered as a guess. |
 | **RIFX (big-endian RIFF)** | Detected and explicitly refused rather than misread. No reference file existed to verify against, and shipping unverified byte-order handling is how wrong numbers appear. |
 | **WMA, WavPack, Monkey's Audio, DSD** | Not common on a Mac music or post desk. The registry makes each a self-contained addition. |
@@ -156,7 +158,7 @@ then open <http://localhost:8181> in Chrome. Or double-click `start.command`.
 Tests:
 
 ```bash
-npm test              # 322 unit tests, no dependencies needed
+npm test              # 334 unit tests, no dependencies needed
 npm run test:browser  # full UI walkthrough (needs: npm install)
 npm run test:fsa      # Chrome save-in-place path, with a stand-in file handle
 ```
