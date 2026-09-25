@@ -87,7 +87,7 @@ export const APP_VERSION = '1.0.0';
  * the confusion that prompted adding it, after a new build appeared to be
  * missing features it plainly contained.
  */
-export const BUILD_DATE = '2026-09-19';
+export const BUILD_DATE = '2026-09-25';
 
 /** Thrown for a file we can identify but must not load. */
 export class LibraryFormatError extends Error {}
