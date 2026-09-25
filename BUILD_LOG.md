@@ -918,3 +918,355 @@ right, and the reason turned out to be structural rather than a tuning slip.
     else in the report.
 
 **299 unit tests, 90 browser assertions, all passing.**
+
+---
+
+## Session 6 — 2026-09-25 — acting on an outside review
+
+An independent review was run against `main` at `930de55`. Ten findings, three
+P1 and seven P2, each with a reproduction recipe. Every one reproduced, most of
+them to the digit, so this session is almost entirely repair.
+
+The review is worth reading for its restraint as much as its findings. It
+disputed none of the deliberate decisions, declined to argue about the mode
+prior on the grounds that nothing in the repository settles it either way, and
+marked clearly which claims it had verified and which it had only inferred. Two
+of the paths it flagged as "similar-looking but not separately reproduced"
+turned out to be real when I chased them.
+
+### The shape the findings had in common
+
+43. **Seven of the ten are the same mistake wearing different clothes: a
+    statement the file makes, reported as a fact about the file.** A COMM
+    chunk's declared size, an MPEG frame header with no frame behind it, an
+    Ogg page header whose payload was truncated away, a `fact` chunk declaring
+    zero samples, a granule count with no rate to divide by, a sample entry
+    from one track beside a media header from another, a NaN read as a level.
+
+    In every case the code had the information needed to know better and did
+    not check. And in five of them the value was not merely wrong but marked
+    `exact`, which is the flag that tells a reader the number does not need
+    checking. Reporting the wrong duration is a bug; certifying it is the
+    thing this app was built not to do.
+
+    The lesson is narrower than "validate input". It is that a parser has two
+    distinct jobs - reading what the file says, and establishing what the file
+    contains - and this codebase had been letting the first stand in for the
+    second whenever the two were expensive to tell apart.
+
+### The three P1s
+
+44. **A declared chunk size is an allocation request.** `BlobByteSource`
+    materialises exactly the range it is handed, so passing a header's declared
+    size to `read()` hands a hostile file the allocator. An AIFF COMM chunk
+    declaring 1 GiB produced a single 1,073,741,824-byte read.
+
+    AIFF INST is the same shape, and so is MP4's esds once the boxes are nested
+    properly - the review flagged both without reproducing them, and both are
+    real. Fixed by reading what the decoder can use rather than what the header
+    claims: COMM is 278 bytes at most, INST is 20, esds is capped at 64 KiB.
+
+    The test asserts the property rather than the three instances. A source
+    that claims to be 20 GB and throws if asked for more than one window means
+    a regression is a failed assertion instead of an out-of-memory.
+
+45. **The true-peak interpolator was never drained, so the end of every file
+    was measured with a filter that had not caught up.** The reconstruction at
+    any moment is built from the taps behind it; when the last sample arrives,
+    the filter has only evaluated the span around the sample twelve back. The
+    final span was never looked at.
+
+    A 0.7 transient in the last four samples read -3.098 dBTP - its own sample
+    peak - where the same signal with twelve trailing zeros read -0.559. Direct
+    sinc reconstruction settles which is right: the signal reaches 0.9507 at
+    positions 96.5 and 98.5, both inside the original span. The peak was always
+    there.
+
+    The error is one-sided - it can only under-read, never over-read, which is
+    the direction that hides an over rather than inventing one. Its size is
+    not general. The reported maximum changes only when the un-evaluated tail
+    holds a peak larger than the largest already found everywhere else in the
+    file, so a file whose loudest moment is anywhere but the last few samples
+    is unaffected. The 2.5 dB here is one constructed case, not a typical
+    figure and not a proven bound.
+
+    `finish()` now carries taps zeros through the delay line, touching the
+    true-peak state only, so duration, gating and the integrated figure are
+    bit for bit unchanged.
+
+46. **`Math.max(...blocks)` has a length limit, and it is reachable.** One
+    argument per block, and the engine gives out at a few hundred thousand -
+    125,279 here. At 100 ms per block that is 3 h 29 min of audio. A four-hour
+    recording did not measure quietly wrong, it threw `RangeError` from a line
+    that looks like arithmetic.
+
+    Worse was what the throw did on the way out. `readLoudness` sat inside the
+    same `try` as `scanAudio`, so a failure assembling a derived figure ran the
+    scan's catch and nulled `report.audio` - discarding peak, RMS, DC offset
+    and clipping that had already been measured correctly. Reading a collector
+    is a separate step from filling it, and it now fails separately.
+
+### NaN, and how it hides
+
+47. **A float WAV can hold NaN, and NaN passes a peak test without changing
+    anything.** `abs > acc.peak` is false for NaN, so the peak stays at zero;
+    `toDbfs` then sees `!(0 > 0)` and returns -Infinity. Meanwhile the sums
+    really do go NaN. A three-sample all-NaN file reported peak 0, -Infinity
+    dBFS, NaN DC offset, `digitalSilence: false`, `measured: true`,
+    `complete: true`, and not one warning.
+
+    Two failures at once, pulling opposite ways: the sums are visibly poisoned
+    while the peak is invisibly untouched. The result is a file that could not
+    be read at all, reported with the numbers of one that was read and found
+    quiet.
+
+    Non-finite samples are now counted and set aside, the denominator is the
+    finite samples so one bad sample cannot dilute good ones, and a channel
+    with nothing readable reports null throughout.
+
+48. **The fix for 47 immediately leaked through a multiplication.**
+    `(c.dcOffset * 100).toFixed(4)` on a null offset: `null * 100` is 0, and
+    `(0).toFixed(4)` is `"0.0000"`. So the newly-correct null rendered as a
+    perfectly centred channel in both the report view and the text export.
+
+    Worth recording because of how it got there. The null rule was not broken
+    by anyone deciding to print a zero - it was broken by JavaScript's
+    coercion, in code written before nulls could reach it, in two places that
+    had been correct for as long as the value was guaranteed to be a number.
+    Making a field nullable is a change to every reader of that field, and
+    grep is the only thing that knows where they are.
+
+### An answer to the review's open question
+
+49. **Multi-track MP4: name the track rather than refuse the file.** The
+    review asked whether unsupported multi-track input should be refused or
+    whether the report should identify the track it describes, noting that the
+    code's stated intention - keep the first audio track - was not what it did.
+    It wasn't: only `mdhd` honoured it, while the sample entry, esds, alac and
+    frame counts were each overwritten by every later track, so a two-track
+    file reported the first track's 44,100 Hz beside the second's 2 channels.
+    A pairing present in neither track.
+
+    Each track now fills its own scratch object and one whole track is
+    committed, chosen by its `hdlr` where the file gives one. Refusing was the
+    other option and was rejected: the file can support a reading, and
+    withholding one would be the app declining to report something it knows.
+    Naming what it describes is the same answer it gives everywhere else.
+
+### What the review did not find
+
+50. **No defect in the gating, the LRA percentiles, or the null handling in
+    the batch comparators, report summaries and CSV.** It looked, and said so
+    plainly rather than manufacturing something. It also declined to call the
+    mode prior either sound or overfitted, on the grounds that the repository
+    contains nothing that would settle it - which is the correct answer, and
+    the same one `AGENTS.md` gives. That question needs a held-out set of real
+    recordings with agreed keys, and no such set exists here yet.
+
+    Its parser fuzzing - 2,100 bounded mutations and truncations across seven
+    formats - produced no escaped exceptions. That is not a proof of
+    correctness and the review did not claim it was.
+
+**314 unit tests, 90 browser assertions, all passing.**
+
+---
+
+## Session 7 — 2026-09-25 — the second pass of the same review
+
+The reviewer re-read the repaired code and found three more P2 issues, all of
+them consequences of session 6's fixes being right about the value and wrong
+about its reach. Every one reproduced. It also corrected a claim I had made
+about the severity of the true-peak bug, and the correction was right.
+
+### The pattern, again, one level up
+
+51. **Making a field nullable is a change to every reader of that field, and
+    session 6 only found some of them.** Entry 48 caught one reader -
+    `(dcOffset * 100).toFixed(4)`. There were four more, and they failed in
+    four different ways, which is why grepping for the field name was not
+    enough:
+
+    - `pcm.js` never read the field at all. It read the *sample*, and went on
+      handing raw NaN to the loudness, tempo and key collectors.
+    - `peak-at-ceiling` read `peakDbfs` through a comparison. `null < -0.1` is
+      false, because null coerces to 0, so the rule passed its own guard and
+      then called a dB formatter on null - a `rule-error` in the report.
+    - `yesNo` read `digitalSilence` through a truthiness test, collapsing three
+      states into two: unknown exported as "no".
+    - `finalizeStatus` read none of them, and said "ok".
+
+    A nullable field does not announce itself at its readers. It announces
+    itself as a crash, a coerced zero, a collapsed boolean, or silence -
+    whichever the reader's idiom happens to produce.
+
+### The one that mattered most
+
+52. **A single NaN made an entire clean recording report as near-silence.**
+    The level accumulators were guarded in session 6, so `audio.peak` was
+    correctly null. But `pcm.js` was still pushing the original samples into
+    the loudness collector, and loudness is not a per-sample summary - it is a
+    biquad cascade, where each sample feeds the next. One NaN leaves the filter
+    state NaN permanently.
+
+    One second of 1 kHz at 0.5, with sample 100 replaced: peak correctly
+    -6.02 dBFS, and an integrated loudness of null with the reason "every block
+    in this file fell below the -70 LUFS gate". That is not a missing figure,
+    it is a confident and wrong description of the audio - the exact failure
+    mode this app exists to avoid, produced by a fix intended to prevent it.
+
+    A file of 48,000 NaNs was worse: `measured: true`, true peak -Infinity,
+    momentary max -Infinity, and a reason describing silence.
+
+    The three collectors already had `abandon(reason)`, used when a file is too
+    large to read continuously. The same mechanism applies: the levels carry on
+    because they are per-sample and the bad ones are set aside, and the DSP
+    withholds with the real reason. Skipping a sample would shorten time and
+    substituting a zero would invent a transient, so neither is done. The
+    decoded path takes the same route off `stats.nonFiniteSamples`, which
+    `measureFloatChannels` already counts.
+
+### Truncation, and what a status is for
+
+53. **A report that explained the file was cut short then called itself fully
+    read.** The MP3 and Ogg fixes from session 6 added the warning and cleared
+    `duration.exact`, and stopped there. `finalizeStatus` looks at errors, core
+    fields and duration - none of which a truncated file is missing - so the
+    status stayed `ok` and the CSV said "fully read".
+
+    The fix is a flag, `parse.truncated`, set only where a parser has
+    established that audio the file accounts for is absent. Not a search
+    through the warning text: most warnings are informational, and downgrading
+    on all of them would make "read in full" mean nothing. There is a test for
+    that specifically - a non-standard sample rate still reads as ok.
+
+    The container formats already recorded the same fact as
+    `audioData.shortfall`, so that is folded in at the same point. A WAV whose
+    data chunk declares four times what it holds now reports partial too; it
+    reported ok before, and fixing two formats while leaving a third would only
+    have moved the inconsistency.
+
+### A correction to session 6
+
+54. **I overstated the true-peak bug.** Entry 45 said the 2.5 dB error applied
+    to "any file ending in a transient", and I told the client every true-peak
+    figure the app had ever produced was affected. Neither is supported.
+
+    The error is real and one-sided: the interpolator could only under-read,
+    never over-read. But the reported maximum changes only when the
+    un-evaluated tail holds a peak larger than the largest already found
+    everywhere else in the file. A track whose loudest moment is anywhere but
+    the final samples reports the same figure before and after. The 2.5 dB is
+    one constructed case, chosen to isolate the mechanism, and is neither
+    typical nor a proven worst case.
+
+    Worth recording as its own entry rather than a quiet edit, because the
+    failure is a specific one: having found a real bug and built a correct
+    reproduction, I described its blast radius from the vividness of the test
+    case instead of from the mechanism. A reproduction proves a bug exists. It
+    says nothing on its own about how often it bites.
+
+**322 unit tests, 90 browser assertions, all passing.**
+
+---
+
+## Session 8 — 2026-09-25 — third pass: the consumers
+
+The reviewer audited the consumers of every field the last two sessions made
+nullable, and found five more. All five reproduced. Four are readers; one is
+older than any of this work and is the most serious thing found in three
+rounds.
+
+### The pattern, exhausted
+
+55. **Three rounds, one mistake, three altitudes.** Session 6 made fields
+    nullable and missed four readers. Session 7 fixed those four and missed
+    five more. The five were not in the same places, and that is the point:
+
+    - **F1** was the *aggregate* of a nullable field. `channels.every(c =>
+      c.digitalSilence === true)` answers false for unknown exactly as
+      readily as for known-not-silent, so a file with one silent channel and
+      one unreadable one exported "All silent: no" and said the silent channel
+      was silent "while the others carry audio". Nothing readable in that file
+      is non-zero.
+    - **F2** was a *producer*, not a reader: CAF collapsed declared and
+      available size into one number at the point of reading, so the finalizer
+      added in session 7 had no evidence left to act on. Session 7's note that
+      "the container formats already express this as shortfall" was true of
+      WAV and AIFF and not of CAF, and I did not check.
+    - **F3** was *serialisation*, which is a reader of every field at once.
+    - **F4** was the *position* of a column, not its value.
+    - **F5** and **F6** were sentences: `undefined sample frames`, and
+      `toFixed` on a null in a success message.
+
+    Each round I fixed the class I had just been shown and did not look one
+    level out from it. The general lesson is not "check the readers" - it is
+    that a type change has a blast radius the type system here cannot show,
+    and the only reliable way to find its edge is to have somebody else walk
+    it.
+
+### The one that predates all of this
+
+56. **Saving a library turned known silence into unknown.** JSON cannot
+    represent -Infinity, and `JSON.stringify` does not fail on it - it writes
+    `null` and says nothing. -Infinity dBFS is not a missing reading; it is
+    the established value for digital silence. So every save-and-reopen
+    converted a measurement into a gap: peak, RMS, the per-channel figures and
+    the loudness true peak, on screen, in the text report, and as a blank CSV
+    cell where there had been an explicit `-inf`.
+
+    This has been true since the library was written. It survived a passing
+    round-trip test, because that test checked the structure came back, not
+    that the numbers in it did. It surfaced only because the review went
+    looking for consumers of newly-nullable fields and found one that had been
+    destroying a never-nullable one all along.
+
+    Non-finite numbers are now written as a tagged object and restored on
+    read - tagged rather than the string "-Infinity", because file names,
+    client names and metadata are free text and one of them could legitimately
+    be that word. Libraries written before this keep their nulls; those
+    readings are gone and nothing can recover them.
+
+    Worth its own entry because of how it was found. The bug was not in any
+    line this project changed. It was exposed by asking a consistent question
+    about a different change, which is an argument for the audit rather than
+    for the fix.
+
+### Two things deliberately not done
+
+57. **Whole-file DSP abandonment stays as it is.** The reviewer agreed:
+    restarting the filters after an invalid sample silently changes the
+    programme being measured, and a three-hour result covering only part of a
+    file is useful only as an explicitly partial result, with coverage and
+    omitted intervals disclosed. It must not occupy the unqualified whole-file
+    field. Recorded in `ROADMAP.md` as a designed feature, not a patch.
+
+58. **The LFE case is a real over-correction, and is deferred anyway.** A 5.1
+    file whose LFE holds one NaN reports no integrated loudness, although LFE
+    carries zero BS.1770 weight and the contributing channels are untouched.
+    Clean, that fixture measures -15.0448 LUFS; with the bad LFE sample it
+    measures nothing. The reviewer is right that integrated loudness could
+    legitimately stay established while whole-file true peak goes unknown.
+
+    Not fixed here because it is not the same shape as the other repairs: it
+    splits one refusal into per-figure refusals and needs the weighted path to
+    stop evaluating an excluded channel into `0 * NaN`. Doing that at the end
+    of a repair round, on the strength of one fixture, is how the last two
+    rounds of follow-ups got created. Recorded in `ROADMAP.md` with the
+    evidence.
+
+### Corrections carried
+
+59. **Entry 54's "which is most tracks" is removed.** The conditional
+    statement stands - a track whose loudest moment is anywhere but the final
+    samples reports the same true peak before and after the drain fix - but
+    the claim about how many tracks that describes was not measured here and
+    is gone. Second time in two rounds that I have attached an unmeasured
+    population claim to a correct mechanism.
+
+    The reviewer independently validated the true-peak repair against direct
+    full convolution: 200 deterministic cases, three channels, five sample
+    rates from 8 to 192 kHz, maximum difference 0 dB. That validates the
+    implementation against its own finite interpolator, which is the claim
+    being made, and not against every conceivable continuous reconstruction.
+
+**334 unit tests, 90 browser assertions, all passing.**

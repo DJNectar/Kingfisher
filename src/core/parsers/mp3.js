@@ -34,6 +34,7 @@ import {
   createReport,
   addError,
   addWarning,
+  addTruncation,
   finalizeStatus,
 } from '../report.js';
 
@@ -501,6 +502,13 @@ async function applyDuration(report, source, first, vbr, audioEnd) {
     if (count.resyncs) {
       addWarning(report, `${count.resyncs.toLocaleString('en-US')} place${count.resyncs === 1 ? '' : 's'} in this file did not contain a valid frame where one was expected. The reader skipped ahead to the next frame; the file may have been damaged or edited.`);
     }
+    if (count.truncatedFinalFrame) {
+      // The counted frames are real, so the duration still describes audio
+      // that is present. It is no longer the whole of what the file set out to
+      // hold, which is what `exact` claims.
+      d.exact = false;
+      addTruncation(report, 'The last frame in this file starts but does not finish: its header is present and the audio it describes is not. The duration covers the frames that are complete.');
+    }
     return;
   }
 
@@ -549,6 +557,8 @@ async function countFrames(source, first, audioEnd) {
     return parseFrameHeader(window, position - windowStart);
   };
 
+  let truncatedFinalFrame = false;
+
   while (offset + 4 <= audioEnd && frames < MAX_COUNTED_FRAMES) {
     const header = await headerAt(offset);
 
@@ -560,6 +570,15 @@ async function countFrames(source, first, audioEnd) {
       offset = resyncOffset;
       window = null;
       continue;
+    }
+
+    // A header is not a frame. The last four bytes of a file cut mid-frame
+    // still parse as a valid header, and counting one there adds 26 ms of
+    // audio that is not in the file and then calls the total exact. Check the
+    // declared payload is actually present before counting it.
+    if (offset + header.frameLength > audioEnd) {
+      truncatedFinalFrame = true;
+      break;
     }
 
     frames++;
@@ -575,6 +594,7 @@ async function countFrames(source, first, audioEnd) {
     samples,
     bytes,
     resyncs,
+    truncatedFinalFrame,
     constant: constant && frames > 1,
     complete: offset >= audioEnd - 4 || frames < MAX_COUNTED_FRAMES,
     averageBitrate: frames ? totalBitrate / frames : null,

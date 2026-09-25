@@ -24,6 +24,7 @@ import {
   createReport,
   addError,
   addWarning,
+  addTruncation,
   finalizeStatus,
 } from '../report.js';
 
@@ -155,9 +156,9 @@ async function walk(source, report) {
   }
 
   // Duration: the granule position of the last page.
-  const lastGranule = await findLastGranule(source, first.serial);
+  const lastPage = await findLastGranule(source, first.serial);
   applyFormat(report, codec, source.size);
-  applyDuration(report, codec, lastGranule, source.size);
+  applyDuration(report, codec, lastPage, source.size);
 }
 
 function startsWith(bytes, marker) {
@@ -242,7 +243,22 @@ async function findLastGranule(source, serial) {
     const pageSerial = dv.getUint32(14, true);
     if (pageSerial !== serial) continue;
     const granule = dv.getBigInt64(6, true);
-    if (granule >= 0n) return Number(granule);
+    if (granule < 0n) continue;
+
+    // A granule says how much audio has been decoded by the end of this page.
+    // That is only a fact about the file if the page is actually in it. A
+    // capture pattern, a serial and a granule are 27 bytes; the audio they
+    // account for is however many bytes the segment table then lists. On a
+    // file cut short, those 27 bytes survive and the audio does not, and
+    // reporting the granule anyway states a duration for audio that is gone.
+    const segmentCount = bytes[i + 26];
+    const tableEnd = i + 27 + segmentCount;
+    if (tableEnd > bytes.byteLength) return { granule: Number(granule), complete: false };
+
+    let payload = 0;
+    for (let seg = 0; seg < segmentCount; seg++) payload += bytes[tableEnd - segmentCount + seg];
+    const complete = tableEnd + payload <= bytes.byteLength;
+    return { granule: Number(granule), complete };
   }
   return null;
 }
@@ -299,12 +315,23 @@ function applyFormat(report, codec, fileSize) {
   report.audioData.shortfall = 0;
 }
 
-function applyDuration(report, codec, lastGranule, fileSize) {
+function applyDuration(report, codec, lastPage, fileSize) {
   const d = report.duration;
   const f = report.format;
 
-  if (lastGranule === null) {
+  if (lastPage === null) {
     addWarning(report, 'The last page of this Ogg stream could not be found, so its duration could not be read and is not reported.');
+    return;
+  }
+
+  const lastGranule = lastPage.granule;
+
+  // A granule count means nothing without the rate it is counted at. A stream
+  // declaring a sample rate of zero divides straight to Infinity, and an
+  // infinite duration reported as exact is worse than no duration at all - the
+  // batch table will sort on it and the CSV will carry it. Unknown is null.
+  if (!(codec.granuleRate > 0)) {
+    addWarning(report, 'This stream does not state a usable sample rate, so the granule positions cannot be turned into a duration. No duration is reported.');
     return;
   }
 
@@ -318,7 +345,11 @@ function applyDuration(report, codec, lastGranule, fileSize) {
   d.source = codec.codec === 'Opus'
     ? 'final granule position, less the encoder pre-skip'
     : 'final granule position';
-  d.exact = true;
+  d.exact = lastPage.complete;
+
+  if (!lastPage.complete) {
+    addTruncation(report, 'The last page of this stream is cut short: its header says how much audio the stream ends with, but that audio is not all in the file. The duration shown is what the header claims, not what is present.');
+  }
 
   if (d.seconds > 0) f.bitrate = Math.round((fileSize * 8) / d.seconds);
 }

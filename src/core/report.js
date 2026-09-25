@@ -208,6 +208,17 @@ export function createReport(file = {}) {
       parser: null,
       errors: [],
       warnings: [],
+      /**
+       * Set only where a parser has established that audio the file accounts
+       * for is not in the file - a frame header with no frame, an Ogg page
+       * whose payload was cut away, a data chunk shorter than it declares.
+       *
+       * A flag rather than a search through the warnings, because most
+       * warnings are informational and downgrading the status on all of them
+       * would make "read in full" meaningless. This one means the read did not
+       * get everything the file said was there.
+       */
+      truncated: false,
     },
   };
 }
@@ -221,6 +232,17 @@ export function addWarning(report, message, context = null) {
 }
 
 /**
+ * Record that part of the audio this file accounts for is missing, and say so.
+ *
+ * Both halves together: the warning explains it to a reader, and the flag is
+ * what stops the report calling itself fully read.
+ */
+export function addTruncation(report, message, context = null) {
+  report.parse.truncated = true;
+  addWarning(report, message, context);
+}
+
+/**
  * Status is derived, never set by hand, so it cannot drift from the evidence:
  * any error at all means we could not fully parse the file.
  */
@@ -229,9 +251,18 @@ export function finalizeStatus(report) {
     && report.format.channels !== null
     && report.format.codec !== null;
 
+  // A shortfall is the container formats' way of saying the same thing the
+  // truncated flag says: the data chunk declares more audio than the file
+  // holds. It is recorded as a number rather than a flag, so it is folded in
+  // here instead of at each parser.
+  const missingAudio = report.parse.truncated
+    || (report.audioData.shortfall !== null && report.audioData.shortfall > 0);
+
   if (!hasCore) {
     report.parse.status = PARSE_STATUS.FAILED;
-  } else if (report.parse.errors.length > 0 || report.duration.seconds === null) {
+  } else if (report.parse.errors.length > 0
+    || report.duration.seconds === null
+    || missingAudio) {
     report.parse.status = PARSE_STATUS.PARTIAL;
   } else {
     report.parse.status = PARSE_STATUS.OK;

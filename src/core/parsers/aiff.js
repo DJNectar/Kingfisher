@@ -46,6 +46,16 @@ import {
 const MAX_CHUNKS = 2048;
 const MAX_DECODE_SIZE = 8 * 1024 * 1024;
 
+// A chunk's declared size is a claim by the file, not a fact about it, and a
+// BlobByteSource materialises whatever it is asked for. These two chunks are
+// fixed-layout, so the decoder can never use more than this many bytes however
+// large the header says the chunk is; reading only this much keeps a hostile
+// header from turning into an allocation. COMM is 18 bytes for AIFF, or 22 plus
+// a Pascal-string compression name (one length byte, up to 255 characters) for
+// AIFC. INST is 20 bytes exactly.
+const COMM_MAX_USEFUL = 23 + 255;
+const INST_MAX_USEFUL = 20;
+
 /**
  * AIFF-C compression types. `endian` is the byte order of the SAMPLES, which
  * for 'sowt' differs from the container.
@@ -205,7 +215,8 @@ async function walk(source, report) {
 
     try {
       if (id === 'COMM' && usableSize > 0) {
-        comm = decodeComm(await readBytes(source, payloadOffset, usableSize), form);
+        const want = Math.min(usableSize, COMM_MAX_USEFUL);
+        comm = decodeComm(await readBytes(source, payloadOffset, want), form);
         entry.decoded = true;
       } else if (id === 'SSND') {
         // SSND begins with offset and blockSize; the samples start after them.
@@ -237,8 +248,10 @@ async function walk(source, report) {
       } else if (id === 'MARK' && usableSize > 0 && usableSize <= MAX_DECODE_SIZE) {
         report.metadata.markers = decodeMarkers(await readBytes(source, payloadOffset, usableSize));
         entry.decoded = true;
-      } else if (id === 'INST' && usableSize >= 20) {
-        report.metadata.instrument = decodeInstrument(await readBytes(source, payloadOffset, usableSize));
+      } else if (id === 'INST' && usableSize >= INST_MAX_USEFUL) {
+        report.metadata.instrument = decodeInstrument(
+          await readBytes(source, payloadOffset, INST_MAX_USEFUL),
+        );
         entry.decoded = true;
       } else if (id === 'COMT' && usableSize > 0 && usableSize <= MAX_DECODE_SIZE) {
         report.metadata.comments = decodeComments(await readBytes(source, payloadOffset, usableSize));

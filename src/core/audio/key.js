@@ -710,7 +710,7 @@ function limitsFor(winner, alternatives, settled, agreement, coherent = true) {
   return limits;
 }
 
-function notEstablished(reason, concentration = null) {
+export function notEstablished(reason, concentration = null) {
   return {
     established: false,
     name: null,

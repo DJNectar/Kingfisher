@@ -473,3 +473,76 @@ function reportWithTempo() {
   };
   return report;
 }
+
+test('a DC offset that could not be established renders as unknown, not as centred', async () => {
+  // `null * 100` is 0 and `(0).toFixed(4)` is "0.0000", so an unmeasurable
+  // channel rendered as a perfectly centred one - the null rule broken by
+  // arithmetic rather than by intent, and indistinguishable from a reading.
+  const { formatDcOffset, UNKNOWN } = await import('../src/core/format.js');
+
+  assert.equal(formatDcOffset(null), UNKNOWN);
+  assert.equal(formatDcOffset(undefined), UNKNOWN);
+  assert.equal(formatDcOffset(NaN), UNKNOWN);
+  assert.equal(formatDcOffset(0), '0.0000%', 'a measured zero is a real reading and must still print');
+  assert.equal(formatDcOffset(0.0123), '1.2300%');
+
+  // And end to end, through the text report.
+  const bytes = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 1, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(new Float32Array([NaN, NaN, NaN]).buffer)),
+  ]);
+  const report = await inspectSource(
+    new BufferByteSource(bytes), { name: 'nan.wav', size: bytes.length }, { detectTempo: false },
+  );
+  const text = renderFileReport(report);
+  assert.doesNotMatch(text, /0\.0000%/, 'an unmeasurable DC offset printed as 0.0000%');
+});
+
+test('a known duration with an unknown frame count does not print "undefined"', async () => {
+  // Some containers give a length without a sample count - an MP4 falling back
+  // to the movie header is the documented case. Optional chaining stopped the
+  // exception and then interpolated the word "undefined" into a sentence,
+  // where it reads as a measurement: "0:00.100 (undefined sample frames)".
+  const mp4 = F.minimalM4a({ duration: 4410 });
+  const at = Buffer.from(mp4).indexOf('mdhd');
+  mp4.set(new TextEncoder().encode('free'), at); // a legal box the parser ignores
+
+  const report = await inspectSource(
+    new BufferByteSource(mp4), { name: 'movie-header.m4a', size: mp4.length }, { detectTempo: false },
+  );
+  assert.equal(report.duration.seconds, 0.1, 'fixture did not take the movie-header fallback');
+  assert.equal(report.duration.frames, null);
+
+  const text = renderFileReport(report);
+  assert.doesNotMatch(text, /undefined/, 'the report printed the word "undefined"');
+  assert.match(text, /0:00\.100\s+\(from movie header\)/);
+
+  const said = report.observations.find((o) => o.id === 'duration-very-short');
+  assert.ok(said);
+  assert.doesNotMatch(said.detail, /undefined/);
+  assert.match(said.detail, /holds 0\.100 seconds of audio/);
+});
+
+test('a known frame count is still printed', async () => {
+  // The omission must apply only to the unknown case.
+  const bytes = F.riff([
+    F.fmtChunk({ channels: 1, sampleRate: 44100, bitsPerSample: 16 }),
+    F.chunk('data', F.pcmData({ frames: 4410, channels: 1, bitsPerSample: 16 })),
+  ]);
+  const report = await inspectSource(
+    new BufferByteSource(bytes), { name: 'plain.wav', size: bytes.length }, { detectTempo: false },
+  );
+  assert.match(renderFileReport(report), /4,410 sample frames/);
+});
+
+test('the CSV keeps its documented stable column positions', async () => {
+  // The file's opening contract is that new columns go on the end, so a
+  // spreadsheet built against an older export keeps working. A column inserted
+  // at position 21 shifted every column after it one to the right, and a
+  // positional formula reading "Levels measured from" silently began reading
+  // the non-finite sample count instead.
+  const header = (await import('../src/export/csv.js')).reportsToCsv([]).split('\r\n')[0].split(',');
+
+  assert.equal(header[20], 'Levels measured from', 'a column was inserted ahead of position 21');
+  assert.equal(header[header.length - 1], 'Samples not readable', 'the newest column is not last');
+});

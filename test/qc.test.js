@@ -13,6 +13,9 @@ import { runRules, countBySeverity, topSeverity } from '../src/core/qc/engine.js
 import { SEVERITY } from '../src/core/qc/severity.js';
 import { RULES, THRESHOLDS } from '../src/core/qc/rules.js';
 import { createReport, PARSE_STATUS } from '../src/core/report.js';
+import { BufferByteSource } from '../src/core/bytes.js';
+import { inspectSource } from '../src/core/registry.js';
+import * as F from './helpers/wav-fixtures.js';
 
 /** A minimal, entirely synthetic "fully read" report. */
 function fakeReport(overrides = {}) {
@@ -343,4 +346,62 @@ test('an inter-sample over is reported as a fact about the file', () => {
 test('a true peak below full scale produces no observation', () => {
   const observations = runRules(fakeReport({ loudness: fakeLoudness({ truePeak: -0.2 }) }));
   assert.equal(observations.find((o) => o.id === 'true-peak-over'), undefined);
+});
+
+test('samples that are not finite are reported as unknown, not as silence', async () => {
+  // NaN fails every comparison, so it slips through a peak test without
+  // changing anything, and toDbfs turns the untouched zero into -Infinity. A
+  // file of nothing but NaN therefore measured as digital silence: peak 0,
+  // -Infinity dBFS, dcOffset NaN, and no warning anywhere. Every one of those
+  // is a fabricated reading of something that was never established.
+  const bytes = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 1, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(new Float32Array([NaN, NaN, NaN]).buffer)),
+  ]);
+  const report = await inspectSource(
+    new BufferByteSource(bytes),
+    { name: 'not-a-number.wav', size: bytes.length },
+    { detectTempo: false },
+  );
+
+  const a = report.audio;
+  // Unknown is null. Not zero, not -Infinity, not NaN.
+  for (const [field, value] of [
+    ['peak', a.peak], ['peakDbfs', a.peakDbfs], ['rmsDbfs', a.rmsDbfs],
+    ['digitalSilence', a.digitalSilence],
+    ['channel rms', a.channels[0].rms], ['channel rmsDbfs', a.channels[0].rmsDbfs],
+    ['channel dcOffset', a.channels[0].dcOffset], ['channel peak', a.channels[0].peak],
+  ]) {
+    assert.equal(value, null, `${field} was ${String(value)} rather than null`);
+  }
+  assert.equal(a.nonFiniteSamples, 3);
+
+  // And it says so, factually, rather than leaving blanks unexplained.
+  const said = report.observations.find((o) => o.id === 'samples-not-finite');
+  assert.ok(said, 'nothing in the report explained the missing levels');
+  assert.match(said.detail, /not a finite value/);
+
+  // Silence is a finding about audio that was read. This file was not read.
+  assert.equal(report.observations.some((o) => o.id === 'digital-silence'), false);
+});
+
+test('a readable file still measures over the samples it has', async () => {
+  // The guard must not change ordinary files: one bad sample among good ones
+  // is set aside and counted, and the rest are measured as before.
+  const clean = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 1, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(new Float32Array([0.5, -0.5, 0.25, -0.25]).buffer)),
+  ]);
+  const withOneBad = F.riff([
+    F.fmtChunk({ formatTag: 3, channels: 1, bitsPerSample: 32 }),
+    F.chunk('data', new Uint8Array(new Float32Array([0.5, -0.5, 0.25, -0.25, NaN]).buffer)),
+  ]);
+
+  const a = await inspectSource(new BufferByteSource(clean), { name: 'a.wav', size: clean.length }, { detectTempo: false });
+  const b = await inspectSource(new BufferByteSource(withOneBad), { name: 'b.wav', size: withOneBad.length }, { detectTempo: false });
+
+  assert.equal(a.audio.nonFiniteSamples, 0);
+  assert.equal(b.audio.nonFiniteSamples, 1);
+  assert.equal(b.audio.peak, a.audio.peak, 'the peak moved because of an unreadable sample');
+  assert.ok(Math.abs(b.audio.channels[0].rms - a.audio.channels[0].rms) < 1e-12, 'the RMS was diluted by an unreadable sample');
 });

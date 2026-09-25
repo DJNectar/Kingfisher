@@ -206,6 +206,39 @@ export function newId() {
   return 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+/**
+ * How a non-finite number survives a round trip through JSON.
+ *
+ * JSON has no way to write Infinity, -Infinity or NaN, and `JSON.stringify`
+ * does not fail on them - it writes `null` and says nothing. That is fine for a
+ * value that was always unknown and quietly catastrophic for one that was not:
+ * -Infinity dBFS is the established reading for digital silence, and after a
+ * save and reopen it came back as null, which this app renders as "could not be
+ * established". Saving a library turned a measurement into a gap.
+ *
+ * A tagged object rather than a sentinel string, because file names, client
+ * names and metadata are all free text and one of them could legitimately be
+ * the word "-Infinity". An object with this exact single key cannot be
+ * mistaken for anything the app stores.
+ */
+const NON_FINITE_TAG = '$nonFinite';
+
+function encodeNonFinite(_key, value) {
+  if (typeof value !== 'number' || Number.isFinite(value)) return value;
+  return { [NON_FINITE_TAG]: Number.isNaN(value) ? 'NaN' : String(value) };
+}
+
+function decodeNonFinite(_key, value) {
+  if (!value || typeof value !== 'object') return value;
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== NON_FINITE_TAG) return value;
+  const written = value[NON_FINITE_TAG];
+  if (written === 'Infinity') return Infinity;
+  if (written === '-Infinity') return -Infinity;
+  if (written === 'NaN') return NaN;
+  return value;
+}
+
 /** Serialise for saving. Pretty-printed so the file survives a diff or a merge. */
 export function serializeLibrary(library) {
   const doc = {
@@ -215,13 +248,13 @@ export function serializeLibrary(library) {
     appVersion: APP_VERSION,
     savedAt: new Date().toISOString(),
   };
-  return JSON.stringify(doc, null, 2);
+  return JSON.stringify(doc, encodeNonFinite, 2);
 }
 
 export function parseLibrary(jsonText) {
   let doc;
   try {
-    doc = JSON.parse(jsonText);
+    doc = JSON.parse(jsonText, decodeNonFinite);
   } catch (err) {
     throw new LibraryFormatError(
       `This file is not readable as JSON (${err.message}). If it was edited by hand or synced while being written, it may be damaged.`,

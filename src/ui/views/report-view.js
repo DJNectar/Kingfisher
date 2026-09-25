@@ -25,6 +25,7 @@ import {
   formatChannels,
   formatDbfs,
   formatSignedDb,
+  formatDcOffset,
   formatTimestamp,
   UNKNOWN,
 } from '../../core/format.js';
@@ -792,7 +793,7 @@ function levelsSection(report, collapsed) {
         formatDbfs(c.peakDbfs),
         formatDbfs(c.rmsDbfs),
         c.peakSeconds === null ? UNKNOWN : formatDuration(c.peakSeconds),
-        `${(c.dcOffset * 100).toFixed(4)}%`,
+        formatDcOffset(c.dcOffset),
         c.digitalSilence ? 'silent' : '',
       ]),
     ),

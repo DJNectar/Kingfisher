@@ -37,6 +37,42 @@ const fmtSignedDb = (v) => (v === -Infinity ? '-∞' : `${v > 0 ? '+' : ''}${v.t
 const truncate = (s, n) => (String(s).length <= n ? String(s) : `${String(s).slice(0, n - 1)}…`);
 const fmtHz = (v) => `${v.toLocaleString('en-US')} Hz`;
 
+/**
+ * Are the levels a measurement, or only the shape of one?
+ *
+ * `measured: true` says the scan ran. It does not say the scan established
+ * anything: a file whose samples are not finite numbers is scanned end to end
+ * and yields null for every figure. Those nulls then flow into comparisons,
+ * where `null < -0.1` is false because null coerces to 0 - so a rule sails past
+ * its own guard and calls a formatter on null.
+ *
+ * Every rule that reads a level goes through here, so the guard cannot be
+ * forgotten in one of them. A genuine -Infinity from real silence is a number
+ * and passes; a null does not.
+ *
+ * It deliberately does not require the aggregate `digitalSilence` to be known.
+ * That field is unknown whenever any one channel could not be read, and a file
+ * with one unreadable channel still has a real peak and real per-channel
+ * findings in the channels that were read. Requiring it here would suppress
+ * those as a side effect of a different channel's damage.
+ */
+/**
+ * "in the file", or "in the part of it that could be read".
+ *
+ * A level is a maximum or a mean over the samples that were readable. When
+ * every sample was, those are the same sentence. When some were not, the
+ * unqualified one claims a scope the measurement does not have.
+ */
+function overWhat(a) {
+  return a.nonFiniteSamples > 0
+    ? 'in the readable part of this file'
+    : 'in this file';
+}
+
+function levelsEstablished(a) {
+  return Boolean(a?.measured) && typeof a.peakDbfs === 'number';
+}
+
 export const RULES = [
   // ---------------------------------------------------------------- parsing
   {
@@ -239,9 +275,13 @@ export const RULES = [
       return {
         id: 'duration-very-short',
         title: `Very short: ${s.toFixed(3)} seconds`,
-        detail: `This file holds ${r.duration.frames?.toLocaleString('en-US')} sample frames, ${s.toFixed(
-          3,
-        )} seconds of audio.`,
+        // The frame count can be unknown while the seconds are known. Say the
+        // part that was established rather than the word "undefined".
+        detail: r.duration.frames === null || r.duration.frames === undefined
+          ? `This file holds ${s.toFixed(3)} seconds of audio.`
+          : `This file holds ${r.duration.frames.toLocaleString('en-US')} sample frames, ${s.toFixed(
+            3,
+          )} seconds of audio.`,
       };
     },
   },
@@ -260,11 +300,34 @@ export const RULES = [
 
   // ----------------------------------------------------------------- signal
   {
+    id: 'samples-not-finite',
+    severity: SEVERITY.ATTENTION,
+    evaluate(r) {
+      const a = r.audio;
+      if (!a?.measured || !a.nonFiniteSamples) return null;
+      const dead = a.channels.filter((c) => c.peak === null);
+      const where = dead.length
+        ? ` No level could be established for ${dead
+          .map((c) => `${c.name} (channel ${c.index + 1})`)
+          .join(', ')}, so those readings are left blank.`
+        : ' The levels shown are measured from the samples that were readable.';
+      return {
+        id: 'samples-not-finite',
+        title: `${a.nonFiniteSamples} sample${a.nonFiniteSamples === 1 ? '' : 's'} could not be read as a number`,
+        detail: `${a.nonFiniteSamples} of the sample${
+          a.nonFiniteSamples === 1 ? '' : 's'
+        } in this file ${
+          a.nonFiniteSamples === 1 ? 'is' : 'are'
+        } not a finite value - NaN or an infinity, which a float file can hold and a converter cannot play.${where}`,
+      };
+    },
+  },
+  {
     id: 'digital-silence',
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || !a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence !== true) return null;
       return {
         id: 'digital-silence',
         title: 'This file is entirely silent',
@@ -281,19 +344,34 @@ export const RULES = [
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
-      const silent = a.channels.filter((c) => c.digitalSilence);
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
+      const named = (list) => list.map((c) => `${c.name} (channel ${c.index + 1})`).join(', ');
+      const silent = a.channels.filter((c) => c.digitalSilence === true);
       if (!silent.length) return null;
+      // "The others carry audio" was asserted about every channel that was not
+      // silent, including channels that could not be read at all. Say only what
+      // was established: these are silent, those were not readable, the rest
+      // carry audio - and drop whichever clause has nobody in it.
+      const unreadable = a.channels.filter((c) => c.digitalSilence === null);
+      const carrying = a.channels.filter((c) => c.digitalSilence === false);
+      const rest = [
+        carrying.length
+          ? `${named(carrying)} ${carrying.length === 1 ? 'carries' : 'carry'} audio`
+          : null,
+        unreadable.length
+          ? `${named(unreadable)} could not be read, so whether ${
+            unreadable.length === 1 ? 'it carries' : 'they carry'
+          } audio is not established`
+          : null,
+      ].filter(Boolean);
       return {
         id: 'channel-silence',
         title: `${silent.length} of ${a.channels.length} channel${
           a.channels.length === 1 ? '' : 's'
         } ${silent.length === 1 ? 'is' : 'are'} silent`,
-        detail: `${silent
-          .map((c) => `${c.name} (channel ${c.index + 1})`)
-          .join(', ')} ${
+        detail: `${named(silent)} ${
           silent.length === 1 ? 'contains' : 'contain'
-        } only zero samples, while the others carry audio.`,
+        } only zero samples${rest.length ? `. ${rest.join('. ')}` : ''}.`,
       };
     },
   },
@@ -302,7 +380,7 @@ export const RULES = [
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       if (a.longestFullScaleRun < THRESHOLDS.clipRunSamples) return null;
       // A decoded signal that overshoots full scale is described by its own
       // rule, which says it accurately. Saying "flat-topped" here as well
@@ -370,13 +448,13 @@ export const RULES = [
     severity: SEVERITY.NOTICE,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       if (a.longestFullScaleRun >= THRESHOLDS.clipRunSamples) return null; // covered above
       if (a.peakDbfs < THRESHOLDS.nearFullScaleDbfs) return null;
       return {
         id: 'peak-at-ceiling',
         title: `Peak reaches ${fmtDb(a.peakDbfs)} dBFS`,
-        detail: `The loudest sample is ${fmtDb(
+        detail: `The loudest sample ${overWhat(a)} is ${fmtDb(
           a.peakDbfs,
         )} dBFS, at the very top of the available scale, with no isolated run long enough to look like flat-topping.`,
       };
@@ -387,7 +465,7 @@ export const RULES = [
     severity: SEVERITY.NOTICE,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || r.format.codecFamily !== 'pcm-float') return null;
+      if (!levelsEstablished(a) || r.format.codecFamily !== 'pcm-float') return null;
       if (a.peak <= 1) return null;
       return {
         id: 'float-above-full-scale',
@@ -401,12 +479,12 @@ export const RULES = [
     severity: SEVERITY.INFO,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       if (a.peakDbfs >= THRESHOLDS.lowLevelDbfs) return null;
       return {
         id: 'level-very-low',
         title: `Peak is ${fmtDb(a.peakDbfs)} dBFS`,
-        detail: `The loudest sample in the file is ${fmtDb(
+        detail: `The loudest sample ${overWhat(a)} is ${fmtDb(
           a.peakDbfs,
         )} dBFS, well below full scale.`,
       };
@@ -417,7 +495,7 @@ export const RULES = [
     severity: SEVERITY.NOTICE,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.digitalSilence) return null;
+      if (!levelsEstablished(a) || a.digitalSilence) return null;
       const offenders = a.channels.filter((c) => Math.abs(c.dcOffset) > THRESHOLDS.dcOffset);
       if (!offenders.length) return null;
       return {
@@ -440,7 +518,7 @@ export const RULES = [
     severity: SEVERITY.ATTENTION,
     evaluate(r) {
       const a = r.audio;
-      if (!a?.measured || a.source !== 'decoded') return null;
+      if (!levelsEstablished(a) || a.source !== 'decoded') return null;
       if (r.format.lossless !== false) return null; // lossless decodes exactly
       if (a.peak <= 1) return null;
       return {

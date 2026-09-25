@@ -16,6 +16,7 @@ import {
   formatBitDepth,
   formatChannels,
   formatDbfs,
+  formatDcOffset,
   formatSignedDb,
   formatTimestamp,
   UNKNOWN,
@@ -106,8 +107,16 @@ export function renderFileReport(report, { heading = 'FILE REPORT' } = {}) {
     } else {
       const src = report.duration.source ? `from ${report.duration.source}` : '';
       const exact = report.duration.exact === false ? ', approximate' : '';
+      // The frame count can be unknown while the seconds are known - a movie
+      // header gives a length without a sample count. Optional chaining kept
+      // that from throwing and then interpolated the word "undefined" into the
+      // sentence, which reads as a measurement of something.
+      const frames = report.duration.frames === null || report.duration.frames === undefined
+        ? null
+        : `${report.duration.frames.toLocaleString('en-US')} sample frames`;
+      const inside = [frames, src, exact.replace(/^, /, '')].filter(Boolean).join(', ');
       lines.push(
-        `  ${formatDuration(report.duration.seconds)}  (${report.duration.frames?.toLocaleString('en-US')} sample frames${src ? `, ${src}` : ''}${exact})`,
+        `  ${formatDuration(report.duration.seconds)}${inside ? `  (${inside})` : ''}`,
       );
     }
 
@@ -216,7 +225,7 @@ function renderLevels(report) {
     lines.push(
       `  ${c.name.padEnd(10)}${formatDbfs(c.peakDbfs).padStart(12)}${formatDbfs(c.rmsDbfs).padStart(12)}${
         (c.peakSeconds === null ? UNKNOWN : formatDuration(c.peakSeconds)).padStart(12)
-      }   ${(c.dcOffset * 100).toFixed(4)}%${c.digitalSilence ? '   (silent)' : ''}`,
+      }   ${formatDcOffset(c.dcOffset)}${c.digitalSilence ? '   (silent)' : ''}`,
     );
   }
   return lines;

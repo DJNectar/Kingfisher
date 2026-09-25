@@ -26,6 +26,7 @@ import {
   integratedFromBlocks,
   oversamplingFactor,
   interpolatorPhases,
+  maxBlockLoudness,
 } from '../src/core/audio/loudness.js';
 import { BufferByteSource } from '../src/core/bytes.js';
 import { inspectSource } from '../src/core/registry.js';
@@ -355,4 +356,86 @@ test('the report never states a loudness target or a verdict', () => {
   ]) {
     assert.doesNotMatch(text, banned, `loudness result used judging language: ${banned}`);
   }
+});
+
+test('the true-peak interpolator is drained at end of stream', () => {
+  // The reconstruction at any moment is built from the samples behind it, so
+  // the last few samples of a file are only fully seen once the filter has been
+  // carried past them. Stopping at the final sample drops that span, and drops
+  // it downwards - a peak that is there goes unreported, which is the direction
+  // that hides an over rather than inventing one.
+  //
+  // A transient in the last four samples. Zero-padding the same signal gives
+  // the interpolator room it should not need: the two must now agree.
+  const tail = new Float64Array(100);
+  tail.set([0.7, 0.7, -0.7, -0.7], 96);
+  const padded = new Float64Array(112);
+  padded.set(tail);
+
+  const atEnd = measureLoudness([tail], { sampleRate: SR }).truePeak;
+  const withRoom = measureLoudness([padded], { sampleRate: SR }).truePeak;
+
+  assert.ok(
+    Math.abs(atEnd - withRoom) < 1e-9,
+    `a transient at the end read ${atEnd} dBTP but ${withRoom} dBTP with padding`,
+  );
+
+  // And it is genuinely above the sample peak: ideal sinc reconstruction of
+  // this signal reaches 0.9507 at sample positions 96.5 and 98.5, both inside
+  // the original span, against a sample peak of 0.7 (-3.098 dBFS).
+  assert.ok(atEnd > -3.0, `true peak ${atEnd} dBTP did not exceed the -3.098 dBFS sample peak`);
+  assert.ok(atEnd < 20 * Math.log10(0.9506855) + 0.2, `true peak ${atEnd} dBTP overshot the ideal reconstruction`);
+});
+
+test('the loudest block is found without an argument limit', () => {
+  // Math.max(...blocks) passes one argument per block. The engine's limit is
+  // reached at a few hundred thousand - measured at 125,279 on the Node this
+  // was written against - so a long enough recording turned a finished
+  // measurement into a RangeError. At 100 ms per block that is 3 h 29 min:
+  // a DJ set, a live capture, a tape transfer. Nothing declares that limit and
+  // it arrives as a crash, not a refusal.
+  const many = new Array(200000).fill(0.01);
+  many[123456] = 1;
+
+  let loudest;
+  assert.doesNotThrow(() => { loudest = maxBlockLoudness(many); }, 'threw on 200,000 blocks');
+  assert.equal(loudest, blockLoudness(1), 'did not find the loudest block');
+
+  // And the empty case stays null rather than -Infinity: no blocks is not
+  // silence, it is nothing measured.
+  assert.equal(maxBlockLoudness([]), null);
+});
+
+test('a loud channel does not suppress a quieter one\'s true peak', () => {
+  // The skip bound is sound: no phase can amplify its input beyond the sum of
+  // the tap magnitudes, so a window quiet enough cannot beat the running peak.
+  // The bug was sharing one counter across channels. A loud moment in the left
+  // channel armed and then disarmed the skip for the right, whose own peak
+  // arrived later and quieter - so the right channel's reconstruction was never
+  // evaluated and its figure collapsed to its sample peak.
+  //
+  // The file-wide maximum survived that, because the channel that set the bound
+  // was the one that needed evaluating. The per-channel figures did not, and
+  // the report shows those too.
+  const left = new Float64Array(300);
+  const right = new Float64Array(300);
+  left[30] = 1;
+  for (let i = 150; i < 250; i++) {
+    right[i] = 0.1 * Math.sin((Math.PI / 2) * (i - 150) + Math.PI / 4);
+  }
+
+  const stereo = measureLoudness([left, right], { sampleRate: SR });
+  const solo = measureLoudness([right], { sampleRate: SR });
+
+  assert.ok(
+    Math.abs(stereo.channels[1].truePeakDbtp - solo.truePeak) < 1e-9,
+    `the right channel read ${stereo.channels[1].truePeakDbtp} dBTP in stereo `
+    + `but ${solo.truePeak} dBTP on its own`,
+  );
+
+  // Specifically, it is no longer just the sample peak read back.
+  assert.ok(
+    stereo.channels[1].truePeakDbtp > stereo.channels[1].samplePeakDbfs + 0.5,
+    'the right channel true peak collapsed onto its sample peak',
+  );
 });

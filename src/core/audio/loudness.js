@@ -390,10 +390,75 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
   let delayHead = 0;
   const truePeaks = new Float64Array(channels);
   const samplePeaks = new Float64Array(channels);
-  let hot = 0;
+  // One skip counter per channel, not one for the file. The bound itself is
+  // per channel - no phase can amplify its own channel's input beyond the sum
+  // of the tap magnitudes - and sharing one counter across channels made a loud
+  // moment in one channel suppress interpolation in the others. The file-wide
+  // maximum survived that, because the channel that set the bound was the one
+  // that needed evaluating; the per-channel figures did not, and those are
+  // reported too.
+  const hotByChannel = new Int32Array(channels);
 
   let frames = 0;
   let abandoned = null;
+
+  /**
+   * Reconstruct the waveform between the newest sample in the delay line and
+   * the one before it, for each channel, and keep whatever it finds.
+   *
+   * Shared by push() and drainTruePeak() so the two cannot drift apart. It is
+   * a call on the hot path, but only on the samples that passed the skip bound,
+   * and those already do taps * factor * channels of work.
+   */
+  function interpolateChannel(c) {
+    const top = c * ringSpan + delayHead + taps;
+    interpolated.fill(0);
+    for (let j = 0; j < taps; j++) {
+      const v = delay[top - j];
+      if (v === 0) continue;
+      const off = j * factor;
+      for (let p = 0; p < factor; p++) interpolated[p] += tapsByTime[off + p] * v;
+    }
+    let best = truePeaks[c];
+    for (let p = 0; p < factor; p++) {
+      const a = interpolated[p] < 0 ? -interpolated[p] : interpolated[p];
+      if (a > best) best = a;
+    }
+    truePeaks[c] = best;
+  }
+
+  function interpolateFrom(n) {
+    for (let c = 0; c < n; c++) interpolateChannel(c);
+  }
+
+  /**
+   * Flush the interpolator at end of stream.
+   *
+   * The reconstruction at any moment is built from the `taps` samples behind
+   * it, so when the last real sample arrives the filter has not yet evaluated
+   * the span around it - only the span around the sample `taps` back. Stopping
+   * there silently drops the reconstruction over the final samples, and it
+   * drops it in the dangerous direction: a peak that is there goes unreported.
+   * A file ending on a loud transient reads up to several dB low.
+   *
+   * Pushing `taps` zeros carries the real samples through the rest of the
+   * window. It touches only the true-peak state: no frames, no sub-block
+   * accumulator, no biquads, so programme duration, the gating blocks and the
+   * integrated figure are all exactly as they were. The skip bound is not
+   * consulted, because a dozen frames is not worth the arithmetic to avoid.
+   */
+  function drainTruePeak() {
+    if (!doTruePeak || !frames) return;
+    for (let i = 0; i < taps; i++) {
+      for (let c = 0; c < channels; c++) {
+        const at = c * ringSpan + delayHead;
+        delay[at] = 0;
+        delay[at + taps] = 0;
+      }
+      interpolateFrom(channels);
+      delayHead = delayHead + 1 === taps ? 0 : delayHead + 1;
+    }
+  }
 
   function pushSubBlock(value) {
     history[historyHead] = value;
@@ -431,13 +496,11 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
       if (abandoned) return;
       const n = count < channels ? count : channels;
 
-      // Does any sample in the interpolator's reach exceed what it would take
-      // to beat the peak so far? If not, the reconstruction between these
-      // samples is bounded below the running peak and can be skipped. The bound
-      // is hard, so this loses nothing; it just avoids the arithmetic over the
-      // large majority of a track that is nowhere near its loudest moment.
-      let loudestNow = 0;
-
+      // Does this sample reach far enough to beat its own channel's peak? If
+      // not, the reconstruction around it is bounded below that peak and can be
+      // skipped. The bound is hard, so this loses nothing; it just avoids the
+      // arithmetic over the large majority of a track that is nowhere near its
+      // loudest moment.
       for (let c = 0; c < n; c++) {
         const x = values[c];
 
@@ -461,8 +524,8 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
 
         const abs = x < 0 ? -x : x;
         if (abs > samplePeaks[c]) samplePeaks[c] = abs;
-        if (abs > loudestNow) loudestNow = abs;
         if (doTruePeak) {
+          if (abs * gainBound > truePeaks[c]) hotByChannel[c] = taps;
           const at = c * ringSpan + delayHead;
           delay[at] = x;
           delay[at + taps] = x;
@@ -470,27 +533,10 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
       }
 
       if (doTruePeak) {
-        let running = 0;
-        for (let c = 0; c < n; c++) if (truePeaks[c] > running) running = truePeaks[c];
-        if (loudestNow * gainBound > running) hot = taps;
-
-        if (hot > 0) {
-          hot--;
-          for (let c = 0; c < n; c++) {
-            const top = c * ringSpan + delayHead + taps;
-            interpolated.fill(0);
-            for (let j = 0; j < taps; j++) {
-              const v = delay[top - j];
-              if (v === 0) continue;
-              const off = j * factor;
-              for (let p = 0; p < factor; p++) interpolated[p] += tapsByTime[off + p] * v;
-            }
-            let best = truePeaks[c];
-            for (let p = 0; p < factor; p++) {
-              const a = interpolated[p] < 0 ? -interpolated[p] : interpolated[p];
-              if (a > best) best = a;
-            }
-            truePeaks[c] = best;
+        for (let c = 0; c < n; c++) {
+          if (hotByChannel[c] > 0) {
+            hotByChannel[c]--;
+            interpolateChannel(c);
           }
         }
         delayHead = delayHead + 1 === taps ? 0 : delayHead + 1;
@@ -511,6 +557,7 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
     finish() {
       if (abandoned) return { abandoned };
       if (!frames) return null;
+      drainTruePeak();
       return finishLoudness({
         momentaryPowers,
         shortTermPowers,
@@ -526,6 +573,23 @@ export function createLoudnessStream({ sampleRate, channels, channelNames = null
       });
     },
   };
+}
+
+/**
+ * The loudest block, in LUFS, or null if there are none.
+ *
+ * A plain loop rather than Math.max over a spread: see the note at the call
+ * site. The block count rises with duration without limit, and the spread's
+ * does not.
+ */
+export function maxBlockLoudness(powers) {
+  if (!powers.length) return null;
+  let best = -Infinity;
+  for (const p of powers) {
+    const l = blockLoudness(p);
+    if (l > best) best = l;
+  }
+  return best;
 }
 
 /** dB from a linear amplitude, with silence as -Infinity rather than NaN. */
@@ -554,12 +618,14 @@ function finishLoudness({
   const integrated = integratedFromBlocks(momentaryPowers);
   const range = rangeFromBlocks(shortTermPowers);
 
-  const momentaryMax = momentaryPowers.length
-    ? Math.max(...momentaryPowers.map(blockLoudness))
-    : null;
-  const shortTermMax = shortTermPowers.length
-    ? Math.max(...shortTermPowers.map(blockLoudness))
-    : null;
+  // Iterated, not spread. Math.max(...blocks) passes one argument per block,
+  // and the engine's argument limit is reached at a few hundred thousand: a
+  // 3 h 29 min file produces 125,280 momentary blocks and throws RangeError
+  // where a 3 h 28 min file returns a number. That is a length limit nobody
+  // declared, arriving as a crash, on exactly the long recordings - sets, live
+  // captures, transfers - where finishing the measurement matters most.
+  const momentaryMax = maxBlockLoudness(momentaryPowers);
+  const shortTermMax = maxBlockLoudness(shortTermPowers);
 
   let integratedReason = null;
   if (!integrated) {

@@ -704,7 +704,7 @@ function limitsFor(steady, wanders = false, sections = 0) {
  * reported as a tempo. It is what makes a refusal checkable rather than a
  * shrug, and it is what a wrongly-set threshold looks like from the outside.
  */
-function notEstablished(reason, evidence = null) {
+export function notEstablished(reason, evidence = null) {
   return {
     established: false,
     bpm: null,

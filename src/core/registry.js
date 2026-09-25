@@ -148,9 +148,6 @@ export async function inspectSource(source, fileInfo = {}, options = {}) {
         chromaCollector: chroma,
         loudnessCollector: loudness,
       });
-      if (collector) report.tempo.measured = readTempo(collector);
-      if (chroma) report.key = readKey(chroma);
-      if (loudness) report.loudness = readLoudness(loudness);
     } catch (err) {
       report.parse.warnings.push({
         message: `The audio data could not be measured: ${err.message}. Level and silence readings are not reported for this file.`,
@@ -158,6 +155,19 @@ export async function inspectSource(source, fileInfo = {}, options = {}) {
       });
       report.audio = null;
       report.loudness = null;
+    }
+
+    // Reading the collectors is a separate step from filling them, and it
+    // fails separately. These three assemble a figure out of what the scan
+    // already collected, so one of them falling over says nothing about the
+    // other two and nothing at all about the levels - those are measured and
+    // in hand by this point. Folding them into the scan's own catch meant a
+    // failure here discarded report.audio as well, throwing away a completed
+    // measurement because a derived one could not be worked out.
+    if (report.audio) {
+      if (collector) report.tempo.measured = derive(report, 'tempo', () => readTempo(collector));
+      if (chroma) report.key = derive(report, 'key', () => readKey(chroma));
+      if (loudness) report.loudness = derive(report, 'loudness', () => readLoudness(loudness));
     }
   }
 
@@ -180,6 +190,25 @@ export async function inspectSource(source, fileInfo = {}, options = {}) {
  * there is not one. A missing tempo always says why: silence about it would
  * look the same as a tempo of nothing.
  */
+/**
+ * Work out one derived figure, and keep the rest of the report if it cannot be.
+ *
+ * Unknown is null, never a guess and never a zero, so a figure that could not
+ * be assembled is reported as missing with a sentence saying why - the same
+ * contract as a value the file never carried.
+ */
+export function derive(report, what, fn) {
+  try {
+    return fn();
+  } catch (err) {
+    report.parse.warnings.push({
+      message: `The ${what} could not be worked out for this file: ${err.message}. It is not reported. The levels are measured and unaffected.`,
+      context: null,
+    });
+    return null;
+  }
+}
+
 function readTempo(collector) {
   const signal = collector.finish();
   if (!signal) return null;

@@ -436,7 +436,7 @@ function applyDuration(report) {
 
   const isPcm = f.codecFamily === 'pcm-int' || f.codecFamily === 'pcm-float';
 
-  if (fact && fact.sampleLength > 0 && (!isPcm || report.audioData.availableSize === null)) {
+  if (fact?.sampleLength > 0 && (!isPcm || report.audioData.availableSize === null)) {
     d.frames = fact.sampleLength;
     d.seconds = fact.sampleLength / f.sampleRate;
     d.source = 'fact chunk';
@@ -464,10 +464,17 @@ function applyDuration(report) {
     return;
   }
 
-  if (!isPcm && !fact) {
-    // For compressed data, bytes/blockAlign is not a frame count. Refusing to
-    // print a number is the point of this app.
-    addWarning(report, `This file uses ${f.codec}, which is not uncompressed PCM, and it has no "fact" chunk. Duration cannot be calculated reliably and is not reported.`);
+  // For compressed data, bytes/blockAlign is not a frame count - a block holds
+  // however many samples the codec packed into it. The fact chunk is the only
+  // thing that can say, and only when it actually says something: a chunk
+  // present but declaring zero samples is not a count, and testing that the
+  // object exists let it through to the PCM arithmetic below. Refusing to print
+  // a number is the point of this app.
+  const factCount = fact && fact.sampleLength > 0 ? fact.sampleLength : null;
+  if (!isPcm && factCount === null) {
+    addWarning(report, fact
+      ? `This file uses ${f.codec}, which is not uncompressed PCM, and its "fact" chunk gives a sample count of ${fact.sampleLength}. Without a usable count the duration cannot be calculated reliably, and is not reported.`
+      : `This file uses ${f.codec}, which is not uncompressed PCM, and it has no "fact" chunk. Duration cannot be calculated reliably and is not reported.`);
     return;
   }
 

@@ -118,6 +118,12 @@ const COLUMNS = [
   ['Needs a look', (r) => r.observations.filter((o) => o.severity === 'attention').map((o) => o.title).join(' | ')],
   ['Worth noting', (r) => r.observations.filter((o) => o.severity === 'notice').map((o) => o.title).join(' | ')],
   ['Checked at', (r) => r.analyzedAt],
+  // Appended, not inserted. The contract at the top of this file is that a
+  // spreadsheet built against an older export keeps working, and a positional
+  // formula does not survive a column appearing in the middle - it silently
+  // reads the neighbour instead. This one went in at position 21 and shifted
+  // every column after it one to the right.
+  ['Samples not readable', (r) => (r.audio?.measured ? r.audio.nonFiniteSamples : null)],
 ];
 
 export function reportsToCsv(reports) {
@@ -214,6 +220,11 @@ function clock(seconds) {
 }
 
 function yesNo(v) {
+  // Three states, not two. A column that could not be established is blank, the
+  // same as every other unknown in this file - collapsing null to "no" turns a
+  // question nobody could answer into a confident negative, and a spreadsheet
+  // has no way to tell the difference afterwards.
+  if (v === null || v === undefined) return null;
   return v ? 'yes' : 'no';
 }
 

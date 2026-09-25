@@ -154,7 +154,7 @@ library. CSV gives one row per file for sorting a delivery in a spreadsheet.
 ## Tests
 
 ```bash
-npm test                      # 299 unit tests, no dependencies needed
+npm test                      # 334 unit tests, no dependencies needed
 
 python3 -m http.server 8181 &
 node test/browser/e2e.mjs     # 90 assertions against the real UI
